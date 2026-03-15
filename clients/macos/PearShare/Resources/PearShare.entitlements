@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- App Sandbox off — required for Unix socket access and CGEvent injection -->
+	<key>com.apple.security.app-sandbox</key>
+	<false/>
+
+	<!-- Screen recording — ScreenCaptureKit requires this entitlement -->
+	<key>com.apple.security.screen-capture</key>
+	<true/>
+
+	<!-- Microphone access -->
+	<key>com.apple.security.device.microphone</key>
+	<true/>
+
+	<!-- Network: outbound (Tailscale connections, UDP beacons) -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+
+	<!-- Network: inbound (TCP signaling listener, UDP beacon receiver) -->
+	<key>com.apple.security.network.server</key>
+	<true/>
+</dict>
+</plist>

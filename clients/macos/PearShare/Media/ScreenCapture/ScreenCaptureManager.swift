@@ -1,0 +1,131 @@
+import Foundation
+import ScreenCaptureKit
+import CoreMedia
+import CoreGraphics
+
+// MARK: - Delegate
+
+/// Called from ScreenCaptureKit's internal queue — implementors must be safe to call off main actor.
+protocol ScreenCaptureManagerDelegate: AnyObject {
+    func screenCaptureManager(_ manager: ScreenCaptureManager, didOutputSampleBuffer sampleBuffer: CMSampleBuffer)
+    func screenCaptureManagerDidStop(_ manager: ScreenCaptureManager)
+}
+
+// MARK: - ScreenCaptureManager
+
+/// Wraps ScreenCaptureKit to capture a display or window as a stream of CMSampleBuffers.
+/// Requires Screen Recording permission (Privacy & Security → Screen Recording).
+@MainActor
+final class ScreenCaptureManager: NSObject {
+
+    weak var delegate: ScreenCaptureManagerDelegate?
+
+    private var stream: SCStream?
+    private var streamOutput: StreamOutput?
+
+    // Capture config
+    var framesPerSecond: Double = 30
+    var targetDisplay: SCDisplay?
+    var targetWindow: SCWindow?
+
+    // MARK: - Available content
+
+    /// Returns shareable displays and windows for the picker.
+    static func availableContent() async throws -> SCShareableContent {
+        try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+    }
+
+    // MARK: - Start / Stop
+
+    func startCapture(display: SCDisplay) async throws {
+        self.targetDisplay = display
+
+        let filter = SCContentFilter(display: display, excludingWindows: [])
+        try await startStream(with: filter)
+    }
+
+    func startCapture(window: SCWindow) async throws {
+        self.targetWindow = window
+
+        let filter = SCContentFilter(desktopIndependentWindow: window)
+        try await startStream(with: filter)
+    }
+
+    func stopCapture() {
+        Task {
+            try? await stream?.stopCapture()
+            stream = nil
+            streamOutput = nil
+            delegate?.screenCaptureManagerDidStop(self)
+        }
+    }
+
+    // MARK: - Internal
+
+    private func startStream(with filter: SCContentFilter) async throws {
+        let config = SCStreamConfiguration()
+
+        // Resolution: capture at display's native resolution, scale down for performance
+        config.width = Int(filter.contentRect.width) > 0
+            ? min(Int(filter.contentRect.width), 2560)
+            : 1920
+        config.height = Int(filter.contentRect.height) > 0
+            ? min(Int(filter.contentRect.height), 1600)
+            : 1080
+
+        config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(framesPerSecond))
+        config.queueDepth = 3
+
+        // Pixel format: 420v (biplanar YCbCr) — VideoToolbox H.264 encoder prefers this
+        config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+
+        // Capture audio of the display too (for system audio passthrough in v2)
+        config.capturesAudio = false
+
+        // Show cursor in capture
+        config.showsCursor = true
+
+        let output = StreamOutput()
+        output.delegate = self
+        self.streamOutput = output
+
+        let s = SCStream(filter: filter, configuration: config, delegate: output)
+        try s.addStreamOutput(output, type: .screen, sampleHandlerQueue: .global(qos: .userInteractive))
+        try await s.startCapture()
+        self.stream = s
+    }
+}
+
+// MARK: - StreamOutput (SCStreamOutput + SCStreamDelegate)
+
+private final class StreamOutput: NSObject, SCStreamOutput, SCStreamDelegate {
+    weak var delegate: ScreenCaptureManager?
+
+    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of outputType: SCStreamOutputType) {
+        guard outputType == .screen else { return }
+        guard let d = delegate else { return }
+        guard sampleBuffer.numSamples > 0 else { return }
+
+        // Deliver directly — delegate protocol is explicitly off-main-actor safe
+        d.delegate?.screenCaptureManager(d, didOutputSampleBuffer: sampleBuffer)
+    }
+
+    func stream(_ stream: SCStream, didStopWithError error: Error) {
+        guard let d = delegate else { return }
+        d.delegate?.screenCaptureManagerDidStop(d)
+    }
+}
+
+// MARK: - Error
+
+enum ScreenCaptureError: LocalizedError {
+    case noDisplayAvailable
+    case permissionDenied
+
+    var errorDescription: String? {
+        switch self {
+        case .noDisplayAvailable: return "No display available for capture."
+        case .permissionDenied: return "Screen Recording permission is required."
+        }
+    }
+}

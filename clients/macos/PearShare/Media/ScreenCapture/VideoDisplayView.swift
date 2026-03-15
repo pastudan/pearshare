@@ -1,0 +1,140 @@
+import SwiftUI
+import MetalKit
+import CoreVideo
+
+// MARK: - SwiftUI wrapper
+
+struct VideoDisplayView: NSViewRepresentable {
+    let renderer: VideoRenderer
+
+    func makeNSView(context: Context) -> MTKView {
+        let view = MTKView()
+        view.device = renderer.device
+        view.delegate = renderer
+        view.framebufferOnly = true
+        view.isPaused = false
+        view.enableSetNeedsDisplay = false
+        view.preferredFramesPerSecond = 60
+        view.colorPixelFormat = .bgra8Unorm
+        renderer.view = view
+        return view
+    }
+
+    func updateNSView(_ nsView: MTKView, context: Context) {}
+}
+
+// MARK: - VideoRenderer
+
+/// Metal-based renderer for decoded CVPixelBuffers.
+/// Maintains a texture cache for zero-copy GPU access to CVPixelBuffers.
+final class VideoRenderer: NSObject, MTKViewDelegate {
+
+    let device: MTLDevice
+    weak var view: MTKView?
+
+    private let commandQueue: MTLCommandQueue
+    private let pipelineState: MTLRenderPipelineState
+    private var textureCache: CVMetalTextureCache?
+    private var currentPixelBuffer: CVPixelBuffer?
+    private let bufferLock = NSLock()
+
+    // MARK: - Init
+
+    init?() {
+        guard let device = MTLCreateSystemDefaultDevice(),
+              let queue = device.makeCommandQueue() else { return nil }
+        self.device = device
+        self.commandQueue = queue
+
+        // Metal shader functions are compiled from VideoShaders.metal into the app bundle.
+        // makeDefaultLibrary() finds them automatically at runtime.
+        guard let library = device.makeDefaultLibrary(),
+              let vertexFn = library.makeFunction(name: "vertexPassthrough"),
+              let fragmentFn = library.makeFunction(name: "fragmentYCbCrToRGB") else {
+            print("[VideoRenderer] Metal shaders not found in default library")
+            return nil
+        }
+
+        let desc = MTLRenderPipelineDescriptor()
+        desc.vertexFunction = vertexFn
+        desc.fragmentFunction = fragmentFn
+        desc.colorAttachments[0].pixelFormat = .bgra8Unorm
+
+        guard let pipeline = try? device.makeRenderPipelineState(descriptor: desc) else { return nil }
+        self.pipelineState = pipeline
+
+        super.init()
+
+        CVMetalTextureCacheCreate(nil, nil, device, nil, &textureCache)
+    }
+
+    // MARK: - Feed decoded frames
+
+    func enqueue(pixelBuffer: CVPixelBuffer) {
+        bufferLock.lock()
+        currentPixelBuffer = pixelBuffer
+        bufferLock.unlock()
+    }
+
+    // MARK: - MTKViewDelegate
+
+    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+
+    func draw(in view: MTKView) {
+        bufferLock.lock()
+        guard let pixelBuffer = currentPixelBuffer else {
+            bufferLock.unlock()
+            return
+        }
+        bufferLock.unlock()
+
+        guard let cache = textureCache,
+              let drawable = view.currentDrawable,
+              let descriptor = view.currentRenderPassDescriptor,
+              let commandBuffer = commandQueue.makeCommandBuffer(),
+              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else { return }
+
+        // Create Metal textures from the CVPixelBuffer planes (zero-copy via IOSurface)
+        let width  = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+
+        guard let yTexture  = makeTexture(from: pixelBuffer, cache: cache, planeIndex: 0, format: .r8Unorm,   width: width,    height: height),
+              let uvTexture = makeTexture(from: pixelBuffer, cache: cache, planeIndex: 1, format: .rg8Unorm, width: width / 2, height: height / 2) else {
+            encoder.endEncoding()
+            commandBuffer.present(drawable)
+            commandBuffer.commit()
+            return
+        }
+
+        encoder.setRenderPipelineState(pipelineState)
+        encoder.setFragmentTexture(yTexture,  index: 0)
+        encoder.setFragmentTexture(uvTexture, index: 1)
+
+        // Draw fullscreen triangle strip (no vertex buffer needed — vertices in shader)
+        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        encoder.endEncoding()
+
+        commandBuffer.present(drawable)
+        commandBuffer.commit()
+    }
+
+    // MARK: - Texture creation
+
+    private func makeTexture(
+        from pixelBuffer: CVPixelBuffer,
+        cache: CVMetalTextureCache,
+        planeIndex: Int,
+        format: MTLPixelFormat,
+        width: Int,
+        height: Int
+    ) -> MTLTexture? {
+        var metalTexture: CVMetalTexture?
+        let status = CVMetalTextureCacheCreateTextureFromImage(
+            nil, cache, pixelBuffer, nil,
+            format, width, height, planeIndex,
+            &metalTexture
+        )
+        guard status == kCVReturnSuccess, let metalTexture else { return nil }
+        return CVMetalTextureGetTexture(metalTexture)
+    }
+}

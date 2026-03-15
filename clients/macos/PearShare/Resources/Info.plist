@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.pearshare.app</string>
+	<key>CFBundleName</key>
+	<string>PearShare</string>
+	<key>CFBundleDisplayName</key>
+	<string>PearShare</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleExecutable</key>
+	<string>PearShare</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>LSUIElement</key>
+	<true/>
+
+	<!-- Privacy descriptions — shown in system prompts -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>PearShare uses your microphone for voice audio during collaboration sessions.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>PearShare needs screen recording access to share your screen with collaborators.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>PearShare uses the local network to discover and connect to peers on your Tailscale network.</string>
+
+	<!-- Bonjour service types used (satisfies Local Network permission prompt) -->
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_pearshare._tcp</string>
+		<string>_pearshare._udp</string>
+	</array>
+</dict>
+</plist>

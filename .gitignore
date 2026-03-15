@@ -1,0 +1,33 @@
+.DS_Store
+*.DS_Store
+
+# Build outputs
+.build/
+DerivedData/
+
+# Xcode
+*.xcuserstate
+xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcworkspace/xcshareddata/swiftpm/
+
+# Windows
+*.user
+*.suo
+*.vs/
+x64/
+Debug/
+Release/
+*.obj
+*.pdb
+*.ilk
+
+# Editor
+.vscode/
+.cursor/
+*.swp
+*~
+
+# Env / secrets
+.env
+*.env.local
