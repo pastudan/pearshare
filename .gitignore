@@ -24,7 +24,6 @@ Release/
 
 # Editor
 .vscode/
-.cursor/
 *.swp
 *~
 
