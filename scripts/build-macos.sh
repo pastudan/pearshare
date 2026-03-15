@@ -3,11 +3,21 @@
 # PearShare macOS build script
 #
 # Usage:
-#   ./scripts/build-macos.sh                  # debug build, runs the app
-#   ./scripts/build-macos.sh --release         # release build (no auto-run)
-#   ./scripts/build-macos.sh --run             # debug build + run
-#   ./scripts/build-macos.sh --clean           # clean derived data first
-#   ./scripts/build-macos.sh --release --archive  # build a distributable .app
+#   ./scripts/build-macos.sh                       # debug build
+#   ./scripts/build-macos.sh --run                  # debug build + run locally
+#   ./scripts/build-macos.sh --deploy               # debug build + rsync to laptop
+#   ./scripts/build-macos.sh --run --deploy         # build + run locally + deploy to laptop
+#   ./scripts/build-macos.sh --clean                # clean derived data first
+#   ./scripts/build-macos.sh --release              # release build
+#   ./scripts/build-macos.sh --release --archive    # build, sign, notarize
+#
+# Deploy target: dan@100.99.149.84 → ~/Downloads/PearShare.app
+#
+# Notarization setup (one-time):
+#   xcrun notarytool store-credentials "pearshare-notarytool" \
+#     --apple-id "dan@hexial.com" \
+#     --team-id "5RH3UFJ9XD" \
+#     --password "xxxx-xxxx-xxxx-xxxx"
 #
 # First-time setup:
 #   1. Install Xcode from the App Store
@@ -27,12 +37,14 @@ SCHEME="PearShare"
 DERIVED_DATA="$REPO_ROOT/.build/macos-derived-data"
 ARCHIVE_PATH="$REPO_ROOT/.build/PearShare.xcarchive"
 EXPORT_PATH="$REPO_ROOT/.build/PearShare-export"
+DEPLOY_HOST="dan@100.99.149.84"
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 CONFIGURATION="Debug"
 RUN=false
 CLEAN=false
 ARCHIVE=false
+DEPLOY=false
 
 # ── Arg parsing ───────────────────────────────────────────────────────────────
 for arg in "$@"; do
@@ -41,6 +53,7 @@ for arg in "$@"; do
     --run)      RUN=true ;;
     --clean)    CLEAN=true ;;
     --archive)  ARCHIVE=true ;;
+    --deploy)   DEPLOY=true ;;
     --help|-h)
       sed -n '2,20p' "$0" | sed 's/^# //'
       exit 0
@@ -94,35 +107,55 @@ do_build() {
   echo "→  Building PearShare ($CONFIGURATION)..."
   mkdir -p "$DERIVED_DATA"
 
-  # -allowProvisioningUpdates lets xcodebuild refresh certs non-interactively
-  # after the first time you've approved them in the GUI.
-  xcodebuild build \
-    -project "$PROJECT" \
-    -scheme "$SCHEME" \
-    -configuration "$CONFIGURATION" \
-    -derivedDataPath "$DERIVED_DATA" \
-    -allowProvisioningUpdates \
-    CODE_SIGN_STYLE=Automatic \
-    | xcpretty --color 2>/dev/null || cat  # fall back to raw output if xcpretty not installed
+  if command -v xcpretty &>/dev/null; then
+    xcodebuild build \
+      -project "$PROJECT" \
+      -scheme "$SCHEME" \
+      -configuration "$CONFIGURATION" \
+      -derivedDataPath "$DERIVED_DATA" \
+      -allowProvisioningUpdates \
+      CODE_SIGN_STYLE=Automatic \
+      | xcpretty --color
+  else
+    xcodebuild build \
+      -project "$PROJECT" \
+      -scheme "$SCHEME" \
+      -configuration "$CONFIGURATION" \
+      -derivedDataPath "$DERIVED_DATA" \
+      -allowProvisioningUpdates \
+      CODE_SIGN_STYLE=Automatic \
+      -quiet
+  fi
 
   echo "✓  Build complete"
 }
 
-# ── Archive (distributable .app) ──────────────────────────────────────────────
+# ── Archive → Sign → Notarize ─────────────────────────────────────────────────
 do_archive() {
   echo "→  Archiving..."
-  xcodebuild archive \
-    -project "$PROJECT" \
-    -scheme "$SCHEME" \
-    -configuration Release \
-    -derivedDataPath "$DERIVED_DATA" \
-    -archivePath "$ARCHIVE_PATH" \
-    -allowProvisioningUpdates \
-    CODE_SIGN_STYLE=Automatic \
-    | xcpretty --color 2>/dev/null || cat
+  if command -v xcpretty &>/dev/null; then
+    xcodebuild archive \
+      -project "$PROJECT" \
+      -scheme "$SCHEME" \
+      -configuration Release \
+      -derivedDataPath "$DERIVED_DATA" \
+      -archivePath "$ARCHIVE_PATH" \
+      -allowProvisioningUpdates \
+      CODE_SIGN_STYLE=Automatic \
+      | xcpretty --color
+  else
+    xcodebuild archive \
+      -project "$PROJECT" \
+      -scheme "$SCHEME" \
+      -configuration Release \
+      -derivedDataPath "$DERIVED_DATA" \
+      -archivePath "$ARCHIVE_PATH" \
+      -allowProvisioningUpdates \
+      CODE_SIGN_STYLE=Automatic \
+      -quiet
+  fi
 
-  echo "→  Exporting .app..."
-  # Export as a Developer ID signed app (not App Store)
+  echo "→  Exporting .app with Developer ID (Kubesail, Inc)..."
   cat > /tmp/pearshare-export-options.plist <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -131,7 +164,9 @@ do_archive() {
     <key>method</key>
     <string>developer-id</string>
     <key>teamID</key>
-    <string>$(DEVELOPMENT_TEAM)</string>
+    <string>5RH3UFJ9XD</string>
+    <key>signingStyle</key>
+    <string>automatic</string>
 </dict>
 </plist>
 PLIST
@@ -143,17 +178,62 @@ PLIST
     -allowProvisioningUpdates
 
   echo "✓  Exported to $EXPORT_PATH/PearShare.app"
+
+  do_notarize
 }
 
-# ── Run ───────────────────────────────────────────────────────────────────────
+# ── Notarize + staple ──────────────────────────────────────────────────────────
+do_notarize() {
+  local app_path="$EXPORT_PATH/PearShare.app"
+  local zip_path="$REPO_ROOT/.build/PearShare-notarize.zip"
+
+  echo "→  Zipping for notarization..."
+  ditto -c -k --sequesterRsrc --keepParent "$app_path" "$zip_path"
+
+  echo "→  Submitting to Apple notarization service (~2 min)..."
+  xcrun notarytool submit "$zip_path" \
+    --keychain-profile "pearshare-notarytool" \
+    --wait \
+    --timeout 10m
+
+  echo "→  Stapling notarization ticket to .app..."
+  xcrun stapler staple "$app_path"
+  rm -f "$zip_path"
+
+  echo "✓  Notarized and stapled: $app_path"
+  echo "    This .app will run on any Mac without Gatekeeper prompts."
+}
+
+# ── Run locally ───────────────────────────────────────────────────────────────
 do_run() {
   local app_path="$DERIVED_DATA/Build/Products/$CONFIGURATION/PearShare.app"
   if [[ ! -d "$app_path" ]]; then
     echo "❌  Built app not found at $app_path"
     exit 1
   fi
+  pkill -x PearShare 2>/dev/null && sleep 0.5 || true
   echo "→  Launching PearShare..."
   open "$app_path"
+}
+
+# ── Deploy (rsync over Tailscale SSH → laptop ~/Downloads) ────────────────────
+do_deploy() {
+  local app_path="$DERIVED_DATA/Build/Products/$CONFIGURATION/PearShare.app"
+
+  if [[ ! -d "$app_path" ]]; then
+    echo "❌  Built app not found at $app_path"
+    exit 1
+  fi
+
+  echo "→  Killing PearShare on $DEPLOY_HOST..."
+  ssh "$DEPLOY_HOST" 'pkill -x PearShare 2>/dev/null && sleep 0.5 || true'
+
+  echo "→  Syncing PearShare.app to $DEPLOY_HOST:~/Downloads/..."
+  rsync -az --delete --progress \
+    "$app_path" \
+    "$DEPLOY_HOST:~/Downloads/"
+
+  echo "✓  Deployed to $DEPLOY_HOST:~/Downloads/PearShare.app"
 }
 
 # ── App path helper ───────────────────────────────────────────────────────────
@@ -187,6 +267,10 @@ else
   if $RUN; then
     echo ""
     do_run
+  fi
+  if $DEPLOY; then
+    echo ""
+    do_deploy
   fi
 fi
 

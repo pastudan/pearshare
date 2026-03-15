@@ -81,10 +81,9 @@ final class H264Decoder {
         var desc: CMVideoFormatDescription?
         let status = spsBytes.withUnsafeBytes { spsPtr in
             ppsBytes.withUnsafeBytes { ppsPtr in
-                let paramSets: [UnsafePointer<UInt8>?] = [
-                    spsPtr.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                    ppsPtr.baseAddress?.assumingMemoryBound(to: UInt8.self)
-                ]
+                let spsBase = spsPtr.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                let ppsBase = ppsPtr.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                let paramSets: [UnsafePointer<UInt8>] = [spsBase, ppsBase]
                 let paramSizes: [Int] = [spsBytes.count, ppsBytes.count]
                 return paramSets.withUnsafeBufferPointer { paramSetsPtr in
                     paramSizes.withUnsafeBufferPointer { paramSizesPtr in
@@ -148,15 +147,16 @@ final class H264Decoder {
         avcc.replaceSubrange(4..., with: nalBytes)
 
         var blockBuffer: CMBlockBuffer?
+        let avccCount = avcc.count
         var status = avcc.withUnsafeMutableBytes { ptr in
             CMBlockBufferCreateWithMemoryBlock(
                 allocator: nil,
                 memoryBlock: ptr.baseAddress,
-                blockLength: avcc.count,
+                blockLength: avccCount,
                 blockAllocator: kCFAllocatorNull,
                 customBlockSource: nil,
                 offsetToData: 0,
-                dataLength: avcc.count,
+                dataLength: avccCount,
                 flags: 0,
                 blockBufferOut: &blockBuffer
             )

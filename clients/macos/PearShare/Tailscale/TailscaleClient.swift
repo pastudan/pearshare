@@ -1,132 +1,80 @@
 import Foundation
-import Network
 
-/// Talks to the Tailscale daemon's local HTTP API over a Unix domain socket.
-/// No API key needed — the socket is readable by the local user.
-///
-/// Docs: https://pkg.go.dev/tailscale.com/client/tailscale
+/// Talks to the Tailscale daemon via its local HTTP API.
+/// Reads port + token directly from /Library/Tailscale/ — no CLI subprocess needed.
+/// Port:  symlink target of /Library/Tailscale/ipnport
+/// Token: contents of /Library/Tailscale/sameuserproof-<port>
 final class TailscaleClient {
 
-    // Tailscale daemon socket locations (tries in order)
-    private static let socketPaths = [
-        "/var/run/tailscale/tailscaled.sock",
-        "/run/tailscale/tailscaled.sock",
-    ]
+    private static let ipnportPath = "/Library/Tailscale/ipnport"
 
     // MARK: - Public API
 
-    /// Returns the current tailnet status including self and all peers.
     func status() async throws -> TailscaleStatus {
-        let data = try await get(path: "/localapi/v0/status")
-        return try JSONDecoder().decode(TailscaleStatus.self, from: data)
+        let (port, token) = try localCreds()
+        let data = try await httpGet(port: port, token: token, path: "/localapi/v0/status")
+        do {
+            return try JSONDecoder().decode(TailscaleStatus.self, from: data)
+        } catch {
+            throw TailscaleError.invalidResponse
+        }
     }
 
-    // MARK: - HTTP over Unix Socket
+    // MARK: - Read credentials from disk
 
-    private func get(path: String) async throws -> Data {
-        guard let socketPath = TailscaleClient.socketPaths.first(where: {
-            FileManager.default.fileExists(atPath: $0)
-        }) else {
+    private func localCreds() throws -> (port: Int, token: String) {
+        // /Library/Tailscale/ipnport is a symlink whose target name IS the port number
+        guard let dest = try? FileManager.default.destinationOfSymbolicLink(
+            atPath: Self.ipnportPath
+        ), let port = Int(dest) else {
             throw TailscaleError.daemonNotRunning
         }
 
-        return try await withCheckedThrowingContinuation { continuation in
-            let connection = NWConnection(to: .unix(path: socketPath), using: .tcp)
-            let accumulator = ResponseAccumulator(continuation: continuation)
-
-            connection.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    let request = "GET \(path) HTTP/1.1\r\nHost: local\r\nConnection: close\r\n\r\n"
-                    connection.send(content: request.data(using: .utf8), completion: .idempotent)
-                    accumulator.receive(from: connection)
-                case .failed(let error):
-                    accumulator.finish(error: error)
-                case .cancelled:
-                    accumulator.finish(error: TailscaleError.connectionCancelled)
-                default:
-                    break
-                }
-            }
-
-            connection.start(queue: .global(qos: .userInitiated))
+        let tokenPath = "/Library/Tailscale/sameuserproof-\(port)"
+        guard let token = try? String(contentsOfFile: tokenPath, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !token.isEmpty else {
+            throw TailscaleError.daemonNotRunning
         }
+
+        return (port: port, token: token)
     }
 
-    private static func extractHTTPBody(from data: Data) -> Data? {
-        let separator = Data([0x0D, 0x0A, 0x0D, 0x0A])
-        guard let range = data.range(of: separator) else { return nil }
-        let bodyStart = range.upperBound
-        guard bodyStart <= data.count else { return nil }
-        return Data(data[bodyStart...])
-    }
-}
+    // MARK: - HTTP request to local API
 
-// MARK: - Response accumulator (avoids inout-in-closure issues)
-
-private final class ResponseAccumulator {
-    private var buffer = Data()
-    private var finished = false
-    private let continuation: CheckedContinuation<Data, Error>
-
-    init(continuation: CheckedContinuation<Data, Error>) {
-        self.continuation = continuation
-    }
-
-    func receive(from connection: NWConnection) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
-            guard let self, !self.finished else { return }
-
-            if let error {
-                connection.cancel()
-                self.finish(error: error)
-                return
-            }
-
-            if let data { self.buffer.append(data) }
-
-            if isComplete || data == nil {
-                connection.cancel()
-                if let body = TailscaleClient.extractHTTPBody(from: self.buffer) {
-                    self.finish(result: body)
-                } else {
-                    self.finish(error: TailscaleError.invalidResponse)
-                }
-                return
-            }
-
-            self.receive(from: connection)
+    private func httpGet(port: Int, token: String, path: String) async throws -> Data {
+        guard let url = URL(string: "http://localhost:\(port)\(path)") else {
+            throw TailscaleError.invalidResponse
         }
-    }
 
-    func finish(result: Data) {
-        guard !finished else { return }
-        finished = true
-        continuation.resume(returning: result)
-    }
+        var request = URLRequest(url: url)
+        let credentials = Data(":\(token)".utf8).base64EncodedString()
+        request.setValue("Basic \(credentials)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 5
 
-    func finish(error: Error) {
-        guard !finished else { return }
-        finished = true
-        continuation.resume(throwing: error)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw TailscaleError.daemonNotRunning
+        }
+        return data
     }
 }
 
 // MARK: - Error
 
 enum TailscaleError: LocalizedError {
+    case cliNotFound
     case daemonNotRunning
-    case connectionCancelled
     case invalidResponse
 
     var errorDescription: String? {
         switch self {
+        case .cliNotFound:
+            return "Tailscale CLI not found. Install Tailscale from tailscale.com."
         case .daemonNotRunning:
-            return "Tailscale daemon is not running. Start Tailscale and try again."
-        case .connectionCancelled:
-            return "Connection to Tailscale daemon was cancelled."
+            return "Tailscale is not running. Start Tailscale and try again."
         case .invalidResponse:
-            return "Received an invalid response from Tailscale daemon."
+            return "Received an unexpected response from Tailscale."
         }
     }
 }

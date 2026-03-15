@@ -66,12 +66,17 @@ final class ScreenCaptureManager: NSObject {
         let config = SCStreamConfiguration()
 
         // Resolution: capture at display's native resolution, scale down for performance
-        config.width = Int(filter.contentRect.width) > 0
-            ? min(Int(filter.contentRect.width), 2560)
-            : 1920
-        config.height = Int(filter.contentRect.height) > 0
-            ? min(Int(filter.contentRect.height), 1600)
-            : 1080
+        if #available(macOS 14.0, *) {
+            config.width = Int(filter.contentRect.width) > 0
+                ? min(Int(filter.contentRect.width), 2560)
+                : 1920
+            config.height = Int(filter.contentRect.height) > 0
+                ? min(Int(filter.contentRect.height), 1600)
+                : 1080
+        } else {
+            config.width = 1920
+            config.height = 1080
+        }
 
         config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(framesPerSecond))
         config.queueDepth = 3
@@ -107,12 +112,16 @@ private final class StreamOutput: NSObject, SCStreamOutput, SCStreamDelegate {
         guard sampleBuffer.numSamples > 0 else { return }
 
         // Deliver directly — delegate protocol is explicitly off-main-actor safe
-        d.delegate?.screenCaptureManager(d, didOutputSampleBuffer: sampleBuffer)
+        Task { @MainActor in
+            d.delegate?.screenCaptureManager(d, didOutputSampleBuffer: sampleBuffer)
+        }
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         guard let d = delegate else { return }
-        d.delegate?.screenCaptureManagerDidStop(d)
+        Task { @MainActor in
+            d.delegate?.screenCaptureManagerDidStop(d)
+        }
     }
 }
 

@@ -3,11 +3,11 @@ import Foundation
 // MARK: - Top-level status response
 
 struct TailscaleStatus: Codable {
-    let `self`: TailscaleSelf
+    let selfNode: TailscaleSelf
     let peer: [String: TailscalePeer]?
 
     enum CodingKeys: String, CodingKey {
-        case `self` = "Self"
+        case selfNode = "Self"
         case peer = "Peer"
     }
 }

@@ -40,31 +40,28 @@ final class VideoRenderer: NSObject, MTKViewDelegate {
 
     // MARK: - Init
 
-    init?() {
+    static func make() -> VideoRenderer? {
         guard let device = MTLCreateSystemDefaultDevice(),
-              let queue = device.makeCommandQueue() else { return nil }
-        self.device = device
-        self.commandQueue = queue
-
-        // Metal shader functions are compiled from VideoShaders.metal into the app bundle.
-        // makeDefaultLibrary() finds them automatically at runtime.
-        guard let library = device.makeDefaultLibrary(),
+              let queue = device.makeCommandQueue(),
+              let library = device.makeDefaultLibrary(),
               let vertexFn = library.makeFunction(name: "vertexPassthrough"),
               let fragmentFn = library.makeFunction(name: "fragmentYCbCrToRGB") else {
-            print("[VideoRenderer] Metal shaders not found in default library")
+            print("[VideoRenderer] Metal device/shaders not available")
             return nil
         }
-
         let desc = MTLRenderPipelineDescriptor()
         desc.vertexFunction = vertexFn
         desc.fragmentFunction = fragmentFn
         desc.colorAttachments[0].pixelFormat = .bgra8Unorm
-
         guard let pipeline = try? device.makeRenderPipelineState(descriptor: desc) else { return nil }
-        self.pipelineState = pipeline
+        return VideoRenderer(device: device, commandQueue: queue, pipelineState: pipeline)
+    }
 
+    private init(device: MTLDevice, commandQueue: MTLCommandQueue, pipelineState: MTLRenderPipelineState) {
+        self.device = device
+        self.commandQueue = commandQueue
+        self.pipelineState = pipelineState
         super.init()
-
         CVMetalTextureCacheCreate(nil, nil, device, nil, &textureCache)
     }
 

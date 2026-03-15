@@ -77,7 +77,7 @@ final class PeerDiscovery {
             let status = try await tailscaleClient.status()
             await MainActor.run {
                 peerStore.tailscaleOnline = true
-                peerStore.selfHostName = status.self.hostName
+                peerStore.selfHostName = status.selfNode.hostName
             }
 
             // Update our map of online Tailscale peers

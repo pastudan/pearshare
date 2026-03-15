@@ -14,6 +14,8 @@ struct ContactListView: View {
             header
             Divider()
             peerList
+            Divider()
+            footer
         }
         .frame(width: 300, height: 400)
         .background(.regularMaterial)
@@ -36,6 +38,22 @@ struct ContactListView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    // MARK: - Footer
+
+    private var footer: some View {
+        HStack {
+            Spacer()
+            Button("Quit PearShare") {
+                NSApplication.shared.terminate(nil)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
     }
 
     // MARK: - Peer list

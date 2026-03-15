@@ -25,8 +25,8 @@ final class MediaSession: NSObject {
     let renderer: VideoRenderer?   // non-nil when role == .viewer
 
     private var captureManager: ScreenCaptureManager?
-    private var decoder: H264Decoder?
-    private var depacketizer: RTPDepacketizer?
+    nonisolated(unsafe) private var decoder: H264Decoder?
+    nonisolated(unsafe) private var depacketizer: RTPDepacketizer?
     private var videoRecvListener: NWListener?
 
     // These are accessed from nonisolated callbacks on the hot path — stored as nonisolated
@@ -42,7 +42,7 @@ final class MediaSession: NSObject {
     init(descriptor: SessionDescriptor, role: SessionRole) {
         self.descriptor = descriptor
         self.role = role
-        self.renderer = role == .viewer ? VideoRenderer() : nil
+        self.renderer = role == .viewer ? VideoRenderer.make() : nil
         super.init()
     }
 
@@ -148,7 +148,7 @@ final class MediaSession: NSObject {
 
     // MARK: - Video receive loop
 
-    private func receiveVideoPackets(from connection: NWConnection) {
+    nonisolated private func receiveVideoPackets(from connection: NWConnection) {
         connection.receiveMessage { [weak self] data, _, _, error in
             guard let self, error == nil, let data else { return }
             self.depacketizer?.receive(packet: data)
@@ -156,7 +156,7 @@ final class MediaSession: NSObject {
         }
     }
 
-    private func handleReassembledFrame(_ frame: RTPDepacketizer.ReassembledFrame) {
+    nonisolated private func handleReassembledFrame(_ frame: RTPDepacketizer.ReassembledFrame) {
         decoder?.decode(annexBData: frame.nalUnit, isKeyframe: frame.isKeyframe)
     }
 }

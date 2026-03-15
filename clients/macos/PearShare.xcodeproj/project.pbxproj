@@ -7,48 +7,48 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		FCBFE54FAB06462DBC647D95 /* PearShareApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 654767F27A1E4DDE80D414CE /* PearShareApp.swift */; };
-		FA7A17E2E2AE48D4B2987973 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15138D24F9DE490589B0B678 /* AppDelegate.swift */; };
-		9D4ACE1466C14C169ADCD9C3 /* TailscaleClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C181EDC836A4AFDA525BB25 /* TailscaleClient.swift */; };
+		09AF7EF1C2584BF0A925C5CF /* SignalingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 390FFECCD5A64A3FA2ABC754 /* SignalingClient.swift */; };
+		103827966BCE4D06AD46A70B /* H264Encoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBF50671E3E641A08FBDEB07 /* H264Encoder.swift */; };
+		1E1FFE6FDE6B44999EA9FACC /* VideoShaders.metal in Sources */ = {isa = PBXBuildFile; fileRef = 4FC8244891494E3FB44A6579 /* VideoShaders.metal */; };
+		421B2EA16DE54375965AFF5E /* SessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3279ABDD1AB643299CD9E312 /* SessionView.swift */; };
+		4354AC46F5C14300BE8D03B6 /* MediaSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE38E9493AE34450A92365C7 /* MediaSession.swift */; };
 		6462E952FFAD43F3BF85E1B4 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC58CBCEC4D4BCC9FF8D491 /* Models.swift */; };
+		9529965AADC6492BB3AF761C /* RTPPacketizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 889BF735ED7B4C208945A290 /* RTPPacketizer.swift */; };
+		9D4ACE1466C14C169ADCD9C3 /* TailscaleClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C181EDC836A4AFDA525BB25 /* TailscaleClient.swift */; };
 		B1B196AF16E0456D9A380952 /* PeerDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 684E109700604C31B3B7D851 /* PeerDiscovery.swift */; };
+		BE5646B78B474DD684E88F66 /* ScreenCaptureManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8D48C573BF64685A94C10D2 /* ScreenCaptureManager.swift */; };
+		C944A87C8DE1408E8F5D36CB /* IncomingRingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58A9BB7C95C94E2B8FE225BA /* IncomingRingView.swift */; };
+		E97551AD15CC49ADB93A4873 /* ContactListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F307B2D112D4F8BBBAB9D08 /* ContactListView.swift */; };
+		EED27FA274CF4FC791B19C1D /* VideoDisplayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96C53CCCC8AA4D84BABD2F70 /* VideoDisplayView.swift */; };
 		F2088C40BBCC45509665BCBF /* SignalingProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DC7C88B5CEC4D7896EF4ADF /* SignalingProtocol.swift */; };
 		F4C8343520BA490FA7E389E0 /* SignalingServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E1A02143C0A4A00B225C359 /* SignalingServer.swift */; };
-		09AF7EF1C2584BF0A925C5CF /* SignalingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 390FFECCD5A64A3FA2ABC754 /* SignalingClient.swift */; };
-		E97551AD15CC49ADB93A4873 /* ContactListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F307B2D112D4F8BBBAB9D08 /* ContactListView.swift */; };
-		C944A87C8DE1408E8F5D36CB /* IncomingRingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58A9BB7C95C94E2B8FE225BA /* IncomingRingView.swift */; };
-		421B2EA16DE54375965AFF5E /* SessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3279ABDD1AB643299CD9E312 /* SessionView.swift */; };
-		BE5646B78B474DD684E88F66 /* ScreenCaptureManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8D48C573BF64685A94C10D2 /* ScreenCaptureManager.swift */; };
-		EED27FA274CF4FC791B19C1D /* VideoDisplayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96C53CCCC8AA4D84BABD2F70 /* VideoDisplayView.swift */; };
-		103827966BCE4D06AD46A70B /* H264Encoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBF50671E3E641A08FBDEB07 /* H264Encoder.swift */; };
 		FA5923B5E4734CC296815432 /* H264Decoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42281B5310EC4B7684CDE6B3 /* H264Decoder.swift */; };
-		9529965AADC6492BB3AF761C /* RTPPacketizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 889BF735ED7B4C208945A290 /* RTPPacketizer.swift */; };
-		4354AC46F5C14300BE8D03B6 /* MediaSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE38E9493AE34450A92365C7 /* MediaSession.swift */; };
-		1E1FFE6FDE6B44999EA9FACC /* VideoShaders.metal in Sources */ = {isa = PBXBuildFile; fileRef = 4FC8244891494E3FB44A6579 /* VideoShaders.metal */; };
+		FA7A17E2E2AE48D4B2987973 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15138D24F9DE490589B0B678 /* AppDelegate.swift */; };
+		FCBFE54FAB06462DBC647D95 /* PearShareApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 654767F27A1E4DDE80D414CE /* PearShareApp.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		654767F27A1E4DDE80D414CE /* PearShareApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PearShareApp.swift; sourceTree = "<group>"; };
-		15138D24F9DE490589B0B678 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
-		6C181EDC836A4AFDA525BB25 /* TailscaleClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TailscaleClient.swift; sourceTree = "<group>"; };
-		2BC58CBCEC4D4BCC9FF8D491 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
-		684E109700604C31B3B7D851 /* PeerDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerDiscovery.swift; sourceTree = "<group>"; };
 		0DC7C88B5CEC4D7896EF4ADF /* SignalingProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignalingProtocol.swift; sourceTree = "<group>"; };
-		5E1A02143C0A4A00B225C359 /* SignalingServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignalingServer.swift; sourceTree = "<group>"; };
-		390FFECCD5A64A3FA2ABC754 /* SignalingClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignalingClient.swift; sourceTree = "<group>"; };
-		8F307B2D112D4F8BBBAB9D08 /* ContactListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactListView.swift; sourceTree = "<group>"; };
-		58A9BB7C95C94E2B8FE225BA /* IncomingRingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncomingRingView.swift; sourceTree = "<group>"; };
+		15138D24F9DE490589B0B678 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		2BC58CBCEC4D4BCC9FF8D491 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		3279ABDD1AB643299CD9E312 /* SessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionView.swift; sourceTree = "<group>"; };
-		F8D48C573BF64685A94C10D2 /* ScreenCaptureManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCaptureManager.swift; sourceTree = "<group>"; };
+		390FFECCD5A64A3FA2ABC754 /* SignalingClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignalingClient.swift; sourceTree = "<group>"; };
+		42281B5310EC4B7684CDE6B3 /* H264Decoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = H264Decoder.swift; sourceTree = "<group>"; };
+		42894C96BA1C4B98997BCA07 /* PearShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PearShare.entitlements; sourceTree = "<group>"; };
+		4FC8244891494E3FB44A6579 /* VideoShaders.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = VideoShaders.metal; sourceTree = "<group>"; };
+		58A9BB7C95C94E2B8FE225BA /* IncomingRingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncomingRingView.swift; sourceTree = "<group>"; };
+		5E1A02143C0A4A00B225C359 /* SignalingServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignalingServer.swift; sourceTree = "<group>"; };
+		654767F27A1E4DDE80D414CE /* PearShareApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PearShareApp.swift; sourceTree = "<group>"; };
+		684E109700604C31B3B7D851 /* PeerDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerDiscovery.swift; sourceTree = "<group>"; };
+		6C181EDC836A4AFDA525BB25 /* TailscaleClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TailscaleClient.swift; sourceTree = "<group>"; };
+		816105E5E691410F9CD175EF /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		889BF735ED7B4C208945A290 /* RTPPacketizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RTPPacketizer.swift; sourceTree = "<group>"; };
+		8F307B2D112D4F8BBBAB9D08 /* ContactListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactListView.swift; sourceTree = "<group>"; };
 		96C53CCCC8AA4D84BABD2F70 /* VideoDisplayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoDisplayView.swift; sourceTree = "<group>"; };
 		EBF50671E3E641A08FBDEB07 /* H264Encoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = H264Encoder.swift; sourceTree = "<group>"; };
-		42281B5310EC4B7684CDE6B3 /* H264Decoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = H264Decoder.swift; sourceTree = "<group>"; };
-		889BF735ED7B4C208945A290 /* RTPPacketizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RTPPacketizer.swift; sourceTree = "<group>"; };
-		FE38E9493AE34450A92365C7 /* MediaSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaSession.swift; sourceTree = "<group>"; };
-		4FC8244891494E3FB44A6579 /* VideoShaders.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = VideoShaders.metal; sourceTree = "<group>"; };
-		816105E5E691410F9CD175EF /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		42894C96BA1C4B98997BCA07 /* PearShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PearShare.entitlements; sourceTree = "<group>"; };
+		F8D48C573BF64685A94C10D2 /* ScreenCaptureManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCaptureManager.swift; sourceTree = "<group>"; };
 		FDFD1CB6CE1F454B9621856A /* PearShare.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PearShare.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		FE38E9493AE34450A92365C7 /* MediaSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaSession.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -62,7 +62,7 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		2E9A09E0538D493EA9CF15BB = {
+		2E9A09E0538D493EA9CF15BB /* PearShare */ = {
 			isa = PBXGroup;
 			children = (
 				74A9EA79A2284FE589885960 /* App */,
@@ -73,75 +73,121 @@
 				D88CEDC773EB4366A6FEB474 /* Resources */,
 				63980CB6A86145BB99B7A78C /* Products */,
 			);
+			path = PearShare;
 			sourceTree = "<group>";
 		};
-		63980CB6A86145BB99B7A78C = {
+		30A24EF3490F4C22935E524A /* Session */ = {
 			isa = PBXGroup;
-			children = (FDFD1CB6CE1F454B9621856A /* PearShare.app */,);
+			children = (
+				FE38E9493AE34450A92365C7 /* MediaSession.swift */,
+			);
+			path = Session;
+			sourceTree = "<group>";
+		};
+		349080022ADE4665A60CB50C /* Tailscale */ = {
+			isa = PBXGroup;
+			children = (
+				6C181EDC836A4AFDA525BB25 /* TailscaleClient.swift */,
+				2BC58CBCEC4D4BCC9FF8D491 /* Models.swift */,
+				684E109700604C31B3B7D851 /* PeerDiscovery.swift */,
+			);
+			path = Tailscale;
+			sourceTree = "<group>";
+		};
+		4D0C9EB3C8C94704A329116A /* ScreenCapture */ = {
+			isa = PBXGroup;
+			children = (
+				F8D48C573BF64685A94C10D2 /* ScreenCaptureManager.swift */,
+				96C53CCCC8AA4D84BABD2F70 /* VideoDisplayView.swift */,
+			);
+			path = ScreenCapture;
+			sourceTree = "<group>";
+		};
+		557A5F3421C54ED28B2331F2 /* VideoCodec */ = {
+			isa = PBXGroup;
+			children = (
+				EBF50671E3E641A08FBDEB07 /* H264Encoder.swift */,
+				42281B5310EC4B7684CDE6B3 /* H264Decoder.swift */,
+				889BF735ED7B4C208945A290 /* RTPPacketizer.swift */,
+			);
+			path = VideoCodec;
+			sourceTree = "<group>";
+		};
+		63980CB6A86145BB99B7A78C /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				FDFD1CB6CE1F454B9621856A /* PearShare.app */,
+			);
 			name = Products;
 			sourceTree = "<group>";
 		};
-		74A9EA79A2284FE589885960 = {
+		74A9EA79A2284FE589885960 /* App */ = {
 			isa = PBXGroup;
-			children = (654767F27A1E4DDE80D414CE,15138D24F9DE490589B0B678,);
-			path = App; sourceTree = "<group>";
+			children = (
+				654767F27A1E4DDE80D414CE /* PearShareApp.swift */,
+				15138D24F9DE490589B0B678 /* AppDelegate.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
 		};
-		349080022ADE4665A60CB50C = {
+		975239B856A84468AE8CE0BB /* Signaling */ = {
 			isa = PBXGroup;
-			children = (6C181EDC836A4AFDA525BB25,2BC58CBCEC4D4BCC9FF8D491,684E109700604C31B3B7D851,);
-			path = Tailscale; sourceTree = "<group>";
+			children = (
+				0DC7C88B5CEC4D7896EF4ADF /* SignalingProtocol.swift */,
+				5E1A02143C0A4A00B225C359 /* SignalingServer.swift */,
+				390FFECCD5A64A3FA2ABC754 /* SignalingClient.swift */,
+			);
+			path = Signaling;
+			sourceTree = "<group>";
 		};
-		975239B856A84468AE8CE0BB = {
+		C6B74DC117294A56B776291D /* UI */ = {
 			isa = PBXGroup;
-			children = (0DC7C88B5CEC4D7896EF4ADF,5E1A02143C0A4A00B225C359,390FFECCD5A64A3FA2ABC754,);
-			path = Signaling; sourceTree = "<group>";
+			children = (
+				8F307B2D112D4F8BBBAB9D08 /* ContactListView.swift */,
+				58A9BB7C95C94E2B8FE225BA /* IncomingRingView.swift */,
+				3279ABDD1AB643299CD9E312 /* SessionView.swift */,
+			);
+			path = UI;
+			sourceTree = "<group>";
 		};
-		C6B74DC117294A56B776291D = {
+		D88CEDC773EB4366A6FEB474 /* Resources */ = {
 			isa = PBXGroup;
-			children = (8F307B2D112D4F8BBBAB9D08,58A9BB7C95C94E2B8FE225BA,3279ABDD1AB643299CD9E312,);
-			path = UI; sourceTree = "<group>";
+			children = (
+				816105E5E691410F9CD175EF /* Info.plist */,
+				42894C96BA1C4B98997BCA07 /* PearShare.entitlements */,
+				4FC8244891494E3FB44A6579 /* VideoShaders.metal */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
 		};
-		F01398F7F7AB4262B0EA895F = {
+		F01398F7F7AB4262B0EA895F /* Media */ = {
 			isa = PBXGroup;
-			children = (4D0C9EB3C8C94704A329116A,557A5F3421C54ED28B2331F2,30A24EF3490F4C22935E524A,);
-			path = Media; sourceTree = "<group>";
-		};
-		4D0C9EB3C8C94704A329116A = {
-			isa = PBXGroup;
-			children = (F8D48C573BF64685A94C10D2,96C53CCCC8AA4D84BABD2F70,);
-			path = ScreenCapture; sourceTree = "<group>";
-		};
-		557A5F3421C54ED28B2331F2 = {
-			isa = PBXGroup;
-			children = (EBF50671E3E641A08FBDEB07,42281B5310EC4B7684CDE6B3,889BF735ED7B4C208945A290,);
-			path = VideoCodec; sourceTree = "<group>";
-		};
-		30A24EF3490F4C22935E524A = {
-			isa = PBXGroup;
-			children = (FE38E9493AE34450A92365C7,);
-			path = Session; sourceTree = "<group>";
-		};
-		D88CEDC773EB4366A6FEB474 = {
-			isa = PBXGroup;
-			children = (816105E5E691410F9CD175EF,42894C96BA1C4B98997BCA07,4FC8244891494E3FB44A6579,);
-			path = Resources; sourceTree = "<group>";
+			children = (
+				4D0C9EB3C8C94704A329116A /* ScreenCapture */,
+				557A5F3421C54ED28B2331F2 /* VideoCodec */,
+				30A24EF3490F4C22935E524A /* Session */,
+			);
+			path = Media;
+			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
 		B36C17FE9ADB4B9DA532AFB3 /* PearShare */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = DCA373DA537D4B4697BE9350;
+			buildConfigurationList = DCA373DA537D4B4697BE9350 /* Build configuration list for PBXNativeTarget "PearShare" */;
 			buildPhases = (
-				14AFA9E5ACDC4253A3664ADC,
-				30200CDD0554441C9951DCAB,
-				A254CC862BE14FAC8CF3892D,
+				14AFA9E5ACDC4253A3664ADC /* Sources */,
+				30200CDD0554441C9951DCAB /* Frameworks */,
+				A254CC862BE14FAC8CF3892D /* Resources */,
 			);
-			buildRules = ();
-			dependencies = ();
+			buildRules = (
+			);
+			dependencies = (
+			);
 			name = PearShare;
 			productName = PearShare;
-			productReference = FDFD1CB6CE1F454B9621856A;
+			productReference = FDFD1CB6CE1F454B9621856A /* PearShare.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -153,32 +199,42 @@
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 1500;
 				LastUpgradeCheck = 1500;
-				TargetAttributes = { B36C17FE9ADB4B9DA532AFB3 = { CreatedOnToolsVersion = 15.0; }; };
+				TargetAttributes = {
+					B36C17FE9ADB4B9DA532AFB3 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
 			};
-			buildConfigurationList = A7468CBC3E214F35A38A16A5;
+			buildConfigurationList = A7468CBC3E214F35A38A16A5 /* Build configuration list for PBXProject "PearShare" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
-			knownRegions = (en, Base,);
-			mainGroup = 2E9A09E0538D493EA9CF15BB;
-			productRefGroup = 63980CB6A86145BB99B7A78C;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 2E9A09E0538D493EA9CF15BB /* PearShare */;
+			productRefGroup = 63980CB6A86145BB99B7A78C /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
-			targets = (B36C17FE9ADB4B9DA532AFB3,);
+			targets = (
+				B36C17FE9ADB4B9DA532AFB3 /* PearShare */,
+			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		A254CC862BE14FAC8CF3892D = {
+		A254CC862BE14FAC8CF3892D /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
-			files = ();
+			files = (
+			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		14AFA9E5ACDC4253A3664ADC = {
+		14AFA9E5ACDC4253A3664ADC /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -216,7 +272,10 @@
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_TESTABILITY = YES;
 				GCC_OPTIMIZATION_LEVEL = 0;
-				GCC_PREPROCESSOR_DEFINITIONS = ("DEBUG=1","$(inherited)",);
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
@@ -226,6 +285,28 @@
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
 			name = Debug;
+		};
+		7CE44334223740F0BEB36B9D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = PearShare/Resources/PearShare.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 5RH3UFJ9XD;
+				INFOPLIST_FILE = PearShare/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.pearshare.app;
+				PRODUCT_NAME = PearShare;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.9;
+			};
+			name = Release;
 		};
 		AE5BB66DD5FA437FA1CC152B /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -249,10 +330,15 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = PearShare/Resources/PearShare.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 5RH3UFJ9XD;
 				INFOPLIST_FILE = PearShare/Resources/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)","@executable_path/../Frameworks",);
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.pearshare.app;
@@ -262,35 +348,24 @@
 			};
 			name = Debug;
 		};
-		7CE44334223740F0BEB36B9D /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = PearShare/Resources/PearShare.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				INFOPLIST_FILE = PearShare/Resources/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)","@executable_path/../Frameworks",);
-				MACOSX_DEPLOYMENT_TARGET = 13.0;
-				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.pearshare.app;
-				PRODUCT_NAME = PearShare;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.9;
-			};
-			name = Release;
-		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		A7468CBC3E214F35A38A16A5 = {
+		A7468CBC3E214F35A38A16A5 /* Build configuration list for PBXProject "PearShare" */ = {
 			isa = XCConfigurationList;
-			buildConfigurations = (6245C957EDB14208B31A23C5,AE5BB66DD5FA437FA1CC152B,);
+			buildConfigurations = (
+				6245C957EDB14208B31A23C5 /* Debug */,
+				AE5BB66DD5FA437FA1CC152B /* Release */,
+			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		DCA373DA537D4B4697BE9350 = {
+		DCA373DA537D4B4697BE9350 /* Build configuration list for PBXNativeTarget "PearShare" */ = {
 			isa = XCConfigurationList;
-			buildConfigurations = (C6C210A24CF040EF84AC9759,7CE44334223740F0BEB36B9D,);
+			buildConfigurations = (
+				C6C210A24CF040EF84AC9759 /* Debug */,
+				7CE44334223740F0BEB36B9D /* Release */,
+			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
