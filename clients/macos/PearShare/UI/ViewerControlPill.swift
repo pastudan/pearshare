@@ -30,6 +30,9 @@ final class ViewerControlPillPanel: NSPanel {
         backgroundColor = .clear
         hasShadow = true
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        // The pill is the only drag handle for the session window (the window itself
+        // has isMovableByWindowBackground = false so drags go to the host).
+        isMovableByWindowBackground = true
     }
 }
 

@@ -180,6 +180,18 @@ final class ControlChannel {
 
         var lastMoveSent: TimeInterval = 0
         var wasInsideWindow = false
+
+        // Shared cursor-update logic used by both mouseMoved and drag events.
+        func sendCursorUpdate(to self: ControlChannel) {
+            let now = Date().timeIntervalSinceReferenceDate
+            guard now - lastMoveSent > 0.016 else { return }
+            lastMoveSent = now
+            let pt = NSEvent.mouseLocation
+            self.onLocalCursorMoved?(pt)
+            let (x, y) = self.normalise(screenPoint: pt)
+            self.send(.mouseMoved(x: x, y: y))
+        }
+
         addLocal(.mouseMoved) { [weak self] _ in
             guard let self else { return }
             let inside = self.isMouseInsideWindow()
@@ -191,13 +203,15 @@ final class ControlChannel {
                 return
             }
             wasInsideWindow = true
-            let now = Date().timeIntervalSinceReferenceDate
-            guard now - lastMoveSent > 0.016 else { return }
-            lastMoveSent = now
-            let pt = NSEvent.mouseLocation
-            self.onLocalCursorMoved?(pt)
-            let (x, y) = self.normalise(screenPoint: pt)
-            self.send(.mouseMoved(x: x, y: y))
+            sendCursorUpdate(to: self)
+        }
+
+        // Drag events: forward cursor position so the host tracks the pointer during a drag.
+        // Without these, the host sees mouseDown + mouseUp with no movement in between,
+        // breaking click-drag operations (file moves, text selection, resizing, etc.)
+        addLocal([.leftMouseDragged, .rightMouseDragged]) { [weak self] _ in
+            guard let self, self.isMouseInsideWindow() else { return }
+            sendCursorUpdate(to: self)
         }
 
         addLocal(.leftMouseDown)  { [weak self] _ in guard self?.isMouseInsideWindow() == true else { return }; self?.sendButton(.left,  down: true)  }

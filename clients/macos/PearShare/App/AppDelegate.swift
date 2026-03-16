@@ -253,7 +253,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = true
-        window.isMovableByWindowBackground = true
+        window.isMovableByWindowBackground = false  // drag must not move window; all drags go to host
         window.delegate = self
         window.center()
 
@@ -281,7 +281,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let resizeObs = NotificationCenter.default.addObserver(
             forName: NSWindow.didResizeNotification, object: window, queue: .main
         ) { [weak self] _ in Task { @MainActor in self?.repositionControlPill() } }
-        pillObservers = [moveObs, resizeObs]
+        // Pill is the drag handle: when the user drags the pill, move the session window to follow.
+        let pillMoveObs = NotificationCenter.default.addObserver(
+            forName: NSWindow.didMoveNotification, object: pill, queue: .main
+        ) { [weak self] _ in Task { @MainActor in self?.sessionWindowFollowsPill() } }
+        pillObservers = [moveObs, resizeObs, pillMoveObs]
 
         // Observe source dimensions: size window to 1:1 or scale-to-fit on first frame.
         rendererCancellable = renderer.$sourceDimensions
@@ -389,6 +393,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let x = window.frame.midX - pill.frame.width / 2
         let y = window.frame.maxY - pill.frame.height / 2
         pill.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
+    /// Inverse of repositionControlPill: when the pill is dragged, move the session window
+    /// so it remains anchored below the pill's centre.
+    private func sessionWindowFollowsPill() {
+        guard let window = sessionWindow, let pill = viewerControlPill else { return }
+        let pillCentreX = pill.frame.midX
+        let pillCentreY = pill.frame.midY   // pill straddles window top → window.maxY == pill.midY
+        let x = pillCentreX - window.frame.width / 2
+        let y = pillCentreY - window.frame.height
+        window.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
     // MARK: - End session
