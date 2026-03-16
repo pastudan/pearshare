@@ -44,6 +44,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        // Ensure cursor-mouse association is enabled at launch (recovery from a previous crash
+        // that may have left CGAssociateMouseAndMouseCursorPosition(false) in effect).
+        CGAssociateMouseAndMouseCursorPosition(boolean_t(1))
         setupStatusItem()
         startServices()
         Task { await ScreenCapturePermission.requestIfNeeded() }
@@ -195,7 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hgo = RemoteCursorOverlayWindow.pastelRed(peerName: "Me")
         self.viewerCursorOverlay = vco
         self.hostGhostOverlay = hgo
-        session.overlayWindowTitles = [kViewerCursorWindowTitle, kHostGhostCursorWindowTitle]
+        session.overlayWindowTitles = [kViewerCursorWindowTitle, kHostGhostCursorWindowTitle, kHostBannerWindowTitle]
 
         let banner = HostBannerWindow.make(peer: peer) { [weak self] in self?.endSession() }
         banner.orderFrontRegardless()

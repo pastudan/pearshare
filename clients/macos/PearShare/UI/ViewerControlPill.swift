@@ -76,7 +76,7 @@ struct ViewerControlPillView: View {
         .frame(width: 300, height: 40)
         .background(
             Capsule()
-                .fill(Color.pearGreen.opacity(0.93))
+                .fill(Color.pearGreen)
         )
         .onAppear { startTimer() }
         .onDisappear { timer?.invalidate() }

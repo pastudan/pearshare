@@ -532,6 +532,13 @@ private final class MouseSuppressionTap {
         runLoopSource = source
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: newTap, enable: true)
+
+        // Belt-and-suspenders: CGAssociateMouseAndMouseCursorPosition(false) operates at the
+        // display-driver level and prevents the trackpad from advancing the cursor position
+        // regardless of the event-tap pipeline. The tap still handles delta accumulation for
+        // the ghost and intercepts the reclaim click. CGWarpMouseCursorPosition (used to
+        // follow the viewer's cursor) continues to work with association disabled.
+        CGAssociateMouseAndMouseCursorPosition(boolean_t(0))
         logger.info("MouseSuppressionTap: enabled")
     }
 
@@ -541,6 +548,7 @@ private final class MouseSuppressionTap {
         if let s = runLoopSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), s, .commonModes) }
         tap = nil
         runLoopSource = nil
+        CGAssociateMouseAndMouseCursorPosition(boolean_t(1))
         logger.info("MouseSuppressionTap: disabled")
     }
 

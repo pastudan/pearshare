@@ -1,6 +1,8 @@
 import SwiftUI
 import AppKit
 
+let kHostBannerWindowTitle = "PearShare-HostBanner"
+
 // MARK: - HostBannerWindow
 
 /// Slim draggable floating banner shown on the host's screen during an active session.
@@ -11,6 +13,7 @@ final class HostBannerWindow: NSWindow {
     static func make(peer: PearPeer, onHangup: @escaping () -> Void) -> HostBannerWindow {
         let w = HostBannerWindow()
         let view = HostBannerView(peer: peer, onHangup: onHangup)
+        w.title = kHostBannerWindowTitle
         let hosting = NSHostingView(rootView: view)
         hosting.wantsLayer = true
         w.contentView = hosting
@@ -107,7 +110,7 @@ struct HostBannerView: View {
         .frame(width: 380, height: 52)
         .background(
             Capsule()
-                .fill(Color.pearGreen.opacity(0.95))
+                .fill(Color.pearGreen.opacity(0.90))
         )
         .onAppear { startTimer() }
         .onDisappear { timer?.invalidate() }
