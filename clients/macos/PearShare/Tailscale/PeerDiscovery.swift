@@ -156,18 +156,20 @@ final class PeerDiscovery {
         guard let beacon = try? JSONDecoder().decode(PresenceBeacon.self, from: data),
               beacon.v == 1,
               beacon.type == "presence" else { return }
+        // Accept missing publicKey for older clients
 
         let tsPeer = tailscaleOnlinePeers[fromIP]
 
         let pearPeer = PearPeer(
-            id: fromIP, // use IP as stable ID for now; could use Tailscale node key
+            id: fromIP,
             hostName: tsPeer?.hostName ?? fromIP,
             displayName: beacon.displayName,
             tailscaleIP: fromIP,
             platform: beacon.platform,
             appVersion: beacon.appVersion,
             status: PearStatus(rawValue: beacon.status) ?? .available,
-            lastSeen: Date()
+            lastSeen: Date(),
+            publicKey: beacon.publicKey
         )
 
         Task { @MainActor in
@@ -192,7 +194,8 @@ final class PeerDiscovery {
             status: "available",
             displayName: Host.current().localizedName ?? "PearShare User",
             platform: "macos",
-            appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
+            appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0",
+            publicKey: IdentityStore.shared.publicKeyBase64
         )
         guard let data = try? JSONEncoder().encode(beacon) else { return }
 
@@ -224,4 +227,6 @@ struct PresenceBeacon: Codable {
     let displayName: String
     let platform: String
     let appVersion: String
+    /// Ed25519 public key (base64) for pubkey-based auto-answer trust. Optional for backwards compat.
+    let publicKey: String?
 }

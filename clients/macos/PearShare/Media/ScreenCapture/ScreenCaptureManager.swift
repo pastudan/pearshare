@@ -33,6 +33,9 @@ final class ScreenCaptureManager: NSObject {
     /// Bundle IDs of apps whose windows should be blacked out in the capture stream.
     var excludedBundleIDs: [String] = []
 
+    /// Window titles (exact match) to exclude — used to exclude overlay NSWindows by title.
+    var excludedWindowTitles: [String] = []
+
     // MARK: - Available content
 
     /// Returns shareable displays and windows for the picker.
@@ -45,11 +48,37 @@ final class ScreenCaptureManager: NSObject {
     func startCapture(display: SCDisplay) async throws {
         self.targetDisplay = display
 
-        // Collect windows belonging to excluded apps and pass them to the filter.
-        // ScreenCaptureKit renders excluded windows as solid black rectangles.
-        let excludedWindows = await resolveExcludedWindows()
-        let filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
-        try await startStream(with: filter)
+        // Resolve excluded apps (by bundle ID) and excluded overlay windows (by title).
+        // Using excludingApplications:exceptingWindows: ensures ALL windows of excluded apps
+        // are blacked out for the life of the stream, including ones opened after capture starts.
+        let (excludedApps, excludedByTitle) = await resolveExcludedContent()
+        let filter = SCContentFilter(
+            display: display,
+            excludingApplications: excludedApps,
+            exceptingWindows: []
+        )
+        // Title-matched windows (e.g. our own overlay) can't go through the app-level filter,
+        // so we apply a second pass only if needed — swapping to window-exclusion mode.
+        if excludedByTitle.isEmpty {
+            try await startStream(with: filter)
+        } else {
+            // Title-matched windows exist (e.g. our overlay) — we can't mix app-level and
+            // window-level exclusion in one filter, so fetch all windows for excluded apps
+            // and combine them with the title-matched windows for a single window-exclusion filter.
+            let bundleSet = Set(excludedApps.map(\.bundleIdentifier))
+            guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false) else {
+                try await startStream(with: filter)
+                return
+            }
+            let appWindows = content.windows.filter {
+                guard let b = $0.owningApplication?.bundleIdentifier else { return false }
+                return bundleSet.contains(b)
+            }
+            var seen = Set<UInt32>()
+            let allExcluded = (excludedByTitle + appWindows).filter { seen.insert($0.windowID).inserted }
+            let fallbackFilter = SCContentFilter(display: display, excludingWindows: allExcluded)
+            try await startStream(with: fallbackFilter)
+        }
     }
 
     func startCapture(window: SCWindow) async throws {
@@ -70,17 +99,32 @@ final class ScreenCaptureManager: NSObject {
 
     // MARK: - Internal
 
-    /// Fetches all on-screen windows and returns those whose owning app bundle ID is excluded.
-    private func resolveExcludedWindows() async -> [SCWindow] {
-        guard !excludedBundleIDs.isEmpty else { return [] }
-        guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) else {
-            return []
+    /// Returns apps to exclude by bundle ID (for the application-level filter) and any
+    /// windows to exclude by title (e.g. our overlay). Keeping these separate lets us use
+    /// the application-level filter — which covers windows opened after capture starts —
+    /// while still handling title-based exclusions.
+    private func resolveExcludedContent() async -> (apps: [SCRunningApplication], titleWindows: [SCWindow]) {
+        let titleSet  = Set(excludedWindowTitles)
+        let bundleSet = Set(excludedBundleIDs)
+
+        guard !titleSet.isEmpty || !bundleSet.isEmpty || !excludedWindows.isEmpty else {
+            return ([], excludedWindows)
         }
-        let excluded = Set(excludedBundleIDs)
-        return content.windows.filter { window in
-            guard let bundleID = window.owningApplication?.bundleIdentifier else { return false }
-            return excluded.contains(bundleID)
+
+        guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false) else {
+            return ([], excludedWindows)
         }
+
+        let matchedApps = bundleSet.isEmpty ? [] : content.applications.filter {
+            bundleSet.contains($0.bundleIdentifier)
+        }
+
+        var titleWindows = excludedWindows
+        if !titleSet.isEmpty {
+            titleWindows += content.windows.filter { titleSet.contains($0.title ?? "") }
+        }
+
+        return (matchedApps, titleWindows)
     }
 
     private func startStream(with filter: SCContentFilter) async throws {

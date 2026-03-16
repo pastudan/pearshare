@@ -1,95 +1,100 @@
 import AppKit
 
+// MARK: - Window title constants
+//
+// Both overlay windows must be excluded from ScreenCaptureKit so they never appear
+// in the H.264 stream. ScreenCaptureManager looks up SCWindows by these titles.
+
+let kViewerCursorWindowTitle = "PearShare-ViewerCursor"
+let kHostGhostCursorWindowTitle = "PearShare-HostGhostCursor"
+
+// Keep the old constant so existing MediaSession.overlayWindowTitle references compile.
+let kRemoteCursorWindowTitle = kViewerCursorWindowTitle
+
 // MARK: - RemoteCursorOverlayWindow
 //
-// A transparent, borderless, non-activating NSWindow that floats above all other windows
-// and draws a colored ring around the remote peer's cursor position.
+// A transparent, borderless, non-activating NSWindow at .floating level that draws
+// a simple colored arrow cursor for a remote (or "ghost") participant.
 //
-// This window is deliberately excluded from ScreenCaptureKit's capture filter so it
-// never appears in the H.264 stream — the host sees the overlay but the viewer's
-// recorded frames stay clean.
-//
-// Window title is set to kRemoteCursorWindowTitle so ScreenCaptureManager can find
-// and exclude it by title when building the SCContentFilter.
-
-let kRemoteCursorWindowTitle = "PearShare-RemoteCursor"
+// No ring, no halo — just a pastel arrow whose color identifies the participant:
+//   pastelRed  = host (shown when viewer has control and host cursor is "ghosted")
+//   pastelBlue = viewer (shown when host has control and viewer cursor is visible)
 
 final class RemoteCursorOverlayWindow: NSWindow {
 
-    // The NSView that does the actual drawing
-    private let cursorView = RemoteCursorView()
+    private let cursorView: CursorArrowView
 
-    /// The peer's display name, shown as a small label beneath the ring.
-    var peerDisplayName: String = "" {
-        didSet { cursorView.peerDisplayName = peerDisplayName }
+    // MARK: - Factory methods
+
+    static func pastelRed(peerName: String = "") -> RemoteCursorOverlayWindow {
+        let color = NSColor(red: 1.0, green: 0.55, blue: 0.55, alpha: 1.0)
+        return RemoteCursorOverlayWindow(color: color, peerName: peerName,
+                                         title: kHostGhostCursorWindowTitle)
+    }
+
+    static func pastelBlue(peerName: String = "") -> RemoteCursorOverlayWindow {
+        let color = NSColor(red: 0.45, green: 0.65, blue: 1.0, alpha: 1.0)
+        return RemoteCursorOverlayWindow(color: color, peerName: peerName,
+                                         title: kViewerCursorWindowTitle)
     }
 
     // MARK: - Init
 
-    init() {
-        // Small window — just big enough for the ring + label
+    init(color: NSColor, peerName: String, title windowTitle: String) {
+        cursorView = CursorArrowView(color: color, peerName: peerName)
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 48, height: 60),
+            contentRect: NSRect(x: 0, y: 0, width: 56, height: 64),
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )
-
-        title = kRemoteCursorWindowTitle
+        self.title = windowTitle
         level = .floating
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
-        ignoresMouseEvents = true           // never steal clicks from actual UI
+        ignoresMouseEvents = true
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-
         contentView = cursorView
     }
 
-    // MARK: - Move to screen position
+    // MARK: - Positioning
 
-    /// Move the overlay so its hotspot (top-left of the arrow) sits at `screenPoint`.
-    /// `screenPoint` is in AppKit screen coordinates (origin bottom-left of main screen).
+    /// Move so the arrow tip sits at `screenPoint` (AppKit coords, origin bottom-left).
     func moveTo(screenPoint: NSPoint) {
-        // Offset so the pointer tip is at the hotspot
         let origin = NSPoint(
-            x: screenPoint.x - RemoteCursorView.hotspotX,
-            y: screenPoint.y - (frame.height - RemoteCursorView.hotspotY)
+            x: screenPoint.x - CursorArrowView.tipX,
+            y: screenPoint.y - (frame.height - CursorArrowView.tipY)
         )
         setFrameOrigin(origin)
     }
 
-    // MARK: - Show / Hide
+    // MARK: - Visibility
 
-    func show() {
-        orderFrontRegardless()
-    }
+    func show() { orderFrontRegardless() }
+    func hide() { orderOut(nil) }
 
-    func hide() {
-        orderOut(nil)
+    var peerDisplayName: String {
+        get { cursorView.peerName }
+        set { cursorView.peerName = newValue }
     }
 }
 
-// MARK: - RemoteCursorView
+// MARK: - CursorArrowView
 
-/// Draws an arrow cursor with a colored ring halo — visually distinct from the local cursor.
-private final class RemoteCursorView: NSView {
+private final class CursorArrowView: NSView {
 
-    // Hotspot offsets within the view frame (where the arrow tip is)
-    static let hotspotX: CGFloat = 4
-    static let hotspotY: CGFloat = 4
+    /// Where the tip of the arrow is within the view frame (AppKit coords, origin bottom-left).
+    static let tipX: CGFloat = 4
+    static let tipY: CGFloat = 4  // distance from top of view
 
-    // Accent color for the ring (teal, visually distinct from system blue/green)
-    private static let ringColor = NSColor(red: 0.0, green: 0.78, blue: 0.75, alpha: 1.0)
-    private static let ringWidth: CGFloat = 2.5
-    private static let ringRadius: CGFloat = 11
+    private let arrowColor: NSColor
+    var peerName: String { didSet { needsDisplay = true } }
 
-    var peerDisplayName: String = "" {
-        didSet { needsDisplay = true }
-    }
-
-    override init(frame: NSRect) {
-        super.init(frame: frame)
+    init(color: NSColor, peerName: String) {
+        self.arrowColor = color
+        self.peerName = peerName
+        super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = .clear
     }
@@ -99,56 +104,40 @@ private final class RemoteCursorView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
 
-        let tip = CGPoint(x: Self.hotspotX, y: bounds.height - Self.hotspotY - 20)
+        // In AppKit coords (origin bottom-left of view):
+        let tip = CGPoint(x: Self.tipX, y: bounds.height - Self.tipY - 20)
 
-        // Draw the colored ring centered near the arrow tip
-        let ringCenter = CGPoint(x: tip.x + 6, y: tip.y + 6)
-        ctx.setStrokeColor(Self.ringColor.cgColor)
-        ctx.setLineWidth(Self.ringWidth)
-        ctx.addEllipse(in: CGRect(
-            x: ringCenter.x - Self.ringRadius,
-            y: ringCenter.y - Self.ringRadius,
-            width: Self.ringRadius * 2,
-            height: Self.ringRadius * 2
-        ))
-        ctx.strokePath()
+        drawArrow(at: tip, color: arrowColor, in: ctx)
 
-        // Draw a standard arrow cursor shape in white with a dark outline
-        drawArrow(at: tip, in: ctx)
-
-        // Peer name label beneath the arrow
-        if !peerDisplayName.isEmpty {
+        if !peerName.isEmpty {
             let attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 9, weight: .medium),
-                .foregroundColor: NSColor.white,
+                .font: NSFont.systemFont(ofSize: 9, weight: .semibold),
+                .foregroundColor: arrowColor,
             ]
-            let str = NSAttributedString(string: peerDisplayName, attributes: attrs)
-            let labelOrigin = NSPoint(x: tip.x + 14, y: tip.y - 14)
-            str.draw(at: labelOrigin)
+            NSAttributedString(string: peerName, attributes: attrs)
+                .draw(at: NSPoint(x: tip.x + 14, y: tip.y - 14))
         }
     }
 
-    // Draws a simple arrow cursor polygon
-    private func drawArrow(at tip: CGPoint, in ctx: CGContext) {
-        let arrowPath = CGMutablePath()
-        arrowPath.move(to: tip)
-        arrowPath.addLine(to: CGPoint(x: tip.x,      y: tip.y - 16))
-        arrowPath.addLine(to: CGPoint(x: tip.x + 4,  y: tip.y - 12))
-        arrowPath.addLine(to: CGPoint(x: tip.x + 9,  y: tip.y - 20))
-        arrowPath.addLine(to: CGPoint(x: tip.x + 11, y: tip.y - 19))
-        arrowPath.addLine(to: CGPoint(x: tip.x + 6,  y: tip.y - 11))
-        arrowPath.addLine(to: CGPoint(x: tip.x + 10, y: tip.y - 11))
-        arrowPath.closeSubpath()
+    private func drawArrow(at tip: CGPoint, color: NSColor, in ctx: CGContext) {
+        let path = CGMutablePath()
+        path.move(to: tip)
+        path.addLine(to: CGPoint(x: tip.x,      y: tip.y - 16))
+        path.addLine(to: CGPoint(x: tip.x + 4,  y: tip.y - 12))
+        path.addLine(to: CGPoint(x: tip.x + 9,  y: tip.y - 20))
+        path.addLine(to: CGPoint(x: tip.x + 11, y: tip.y - 19))
+        path.addLine(to: CGPoint(x: tip.x + 6,  y: tip.y - 11))
+        path.addLine(to: CGPoint(x: tip.x + 10, y: tip.y - 11))
+        path.closeSubpath()
 
-        // Dark outline
-        ctx.setStrokeColor(NSColor.black.withAlphaComponent(0.7).cgColor)
+        // Slightly darkened outline for legibility on any background
+        ctx.setStrokeColor(color.withAlphaComponent(0.6).cgColor)
         ctx.setLineWidth(1.5)
-        ctx.addPath(arrowPath)
+        ctx.addPath(path)
         ctx.strokePath()
 
-        // White fill
-        ctx.setFillColor(NSColor.white.cgColor)
-        ctx.addPath(arrowPath)
+        ctx.setFillColor(color.cgColor)
+        ctx.addPath(path)
         ctx.fillPath()
     }
 }

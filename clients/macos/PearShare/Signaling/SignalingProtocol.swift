@@ -8,64 +8,73 @@ enum SignalingMessageType: String, Codable {
     case reject
     case hangup
     case busy
-    case trustGrant  // out-of-band: granter pushes a trust token to the grantee
 }
 
 // MARK: - Outbound messages (we send these)
 
 struct RingMessage: Codable {
-    let type: String = "ring"
+    let type: String
     let from: String
     let displayName: String
     let tailscaleIP: String
     let version: String
-    /// Present when the caller holds a valid trust token for this peer.
-    /// Ignored by peers that don't support trusted-device auto-answer.
-    let trustedToken: String?
     /// "share" = caller is sharing their screen to the callee (callee watches).
     /// "request" = caller is asking the callee to share their screen (caller watches).
-    /// Defaults to "share" for backwards compatibility with older clients.
     let intent: String
+    /// Caller-generated nonce (base64), signed with caller's private key for auto-answer verification.
+    let nonce: String?
+    /// Ed25519 signature over nonce (base64). Callee verifies with stored pubkey for caller.
+    let signature: String?
 
     init(from: String, displayName: String, tailscaleIP: String, version: String,
-         trustedToken: String? = nil, intent: String = "share") {
+         intent: String = "share", nonce: String? = nil, signature: String? = nil) {
+        self.type = "ring"
         self.from = from
         self.displayName = displayName
         self.tailscaleIP = tailscaleIP
         self.version = version
-        self.trustedToken = trustedToken
         self.intent = intent
+        self.nonce = nonce
+        self.signature = signature
     }
 }
 
 struct AcceptMessage: Codable {
-    let type: String = "accept"
+    let type: String
     let sessionId: String
     let videoPort: Int
     let audioPort: Int
     let controlPort: Int
+
+    init(sessionId: String, videoPort: Int, audioPort: Int, controlPort: Int) {
+        self.type = "accept"
+        self.sessionId = sessionId
+        self.videoPort = videoPort
+        self.audioPort = audioPort
+        self.controlPort = controlPort
+    }
 }
 
 struct RejectMessage: Codable {
-    let type: String = "reject"
+    let type: String
     let reason: String
+
+    init(reason: String) {
+        self.type = "reject"
+        self.reason = reason
+    }
 }
 
 struct HangupMessage: Codable {
-    let type: String = "hangup"
+    let type: String
+
+    init() { self.type = "hangup" }
 }
 
 struct BusyMessage: Codable {
-    let type: String = "busy"
-}
+    let type: String
 
-/// Sent by the granting machine to the peer it has just trusted.
-/// The peer stores the token so it can include it in future RingMessages.
-struct TrustGrantMessage: Codable {
-    let type: String = "trustGrant"
-    let token: String
-    let granterDisplayName: String
-    let granterPeerID: String  // granter's Tailscale IP — used as the key on the receiving side
+    init() { self.type = "busy" }
 }
 
 // MARK: - Inbound message envelope (decode type field first)

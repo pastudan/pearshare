@@ -31,9 +31,13 @@
 		AA000001000000000000CE02 /* ControlEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000001000000000000CE01 /* ControlEvent.swift */; };
 		AA000001000000000000CC02 /* ControlChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000001000000000000CC01 /* ControlChannel.swift */; };
 		AA000001000000000000RC02 /* RemoteCursorOverlayWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000001000000000000RC01 /* RemoteCursorOverlayWindow.swift */; };
+		ID000001000000000000ID02 /* IdentityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = ID000001000000000000ID01 /* IdentityStore.swift */; };
 		TD000001000000000000TD02 /* TrustedDeviceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = TD000001000000000000TD01 /* TrustedDeviceStore.swift */; };
 		TA000001000000000000TA02 /* TrustApprovalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = TA000001000000000000TA01 /* TrustApprovalView.swift */; };
 		TV000001000000000000TV02 /* TrustedDevicesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = TV000001000000000000TV01 /* TrustedDevicesView.swift */; };
+		PB000001000000000000PB02 /* PearBrand.swift in Sources */ = {isa = PBXBuildFile; fileRef = PB000001000000000000PB01 /* PearBrand.swift */; };
+		HB000001000000000000HB02 /* HostBannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = HB000001000000000000HB01 /* HostBannerView.swift */; };
+		VP000001000000000000VP02 /* ViewerControlPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = VP000001000000000000VP01 /* ViewerControlPill.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -64,9 +68,13 @@
 		AA000001000000000000CE01 /* ControlEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlEvent.swift; sourceTree = "<group>"; };
 		AA000001000000000000CC01 /* ControlChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlChannel.swift; sourceTree = "<group>"; };
 		AA000001000000000000RC01 /* RemoteCursorOverlayWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteCursorOverlayWindow.swift; sourceTree = "<group>"; };
+		ID000001000000000000ID01 /* IdentityStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityStore.swift; sourceTree = "<group>"; };
 		TD000001000000000000TD01 /* TrustedDeviceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrustedDeviceStore.swift; sourceTree = "<group>"; };
 		TA000001000000000000TA01 /* TrustApprovalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrustApprovalView.swift; sourceTree = "<group>"; };
 		TV000001000000000000TV01 /* TrustedDevicesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrustedDevicesView.swift; sourceTree = "<group>"; };
+		PB000001000000000000PB01 /* PearBrand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PearBrand.swift; sourceTree = "<group>"; };
+		HB000001000000000000HB01 /* HostBannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostBannerView.swift; sourceTree = "<group>"; };
+		VP000001000000000000VP01 /* ViewerControlPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewerControlPill.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -171,6 +179,9 @@
 				BB001122334455667788CCDD /* ExcludedAppsView.swift */,
 				TA000001000000000000TA01 /* TrustApprovalView.swift */,
 				TV000001000000000000TV01 /* TrustedDevicesView.swift */,
+				PB000001000000000000PB01 /* PearBrand.swift */,
+				HB000001000000000000HB01 /* HostBannerView.swift */,
+				VP000001000000000000VP01 /* ViewerControlPill.swift */,
 			);
 			path = UI;
 			sourceTree = "<group>";
@@ -208,6 +219,7 @@
 		TD000001000000000000TG01 /* Trusted */ = {
 			isa = PBXGroup;
 			children = (
+				ID000001000000000000ID01 /* IdentityStore.swift */,
 				TD000001000000000000TD01 /* TrustedDeviceStore.swift */,
 			);
 			path = Trusted;
@@ -305,9 +317,13 @@
 				AA001122334455667788AABB /* ExcludedAppsStore.swift in Sources */,
 				BB001122334455667788AABB /* ExcludedAppsView.swift in Sources */,
 				1E1FFE6FDE6B44999EA9FACC /* VideoShaders.metal in Sources */,
+				ID000001000000000000ID02 /* IdentityStore.swift in Sources */,
 				TD000001000000000000TD02 /* TrustedDeviceStore.swift in Sources */,
 				TA000001000000000000TA02 /* TrustApprovalView.swift in Sources */,
 				TV000001000000000000TV02 /* TrustedDevicesView.swift in Sources */,
+				PB000001000000000000PB02 /* PearBrand.swift in Sources */,
+				HB000001000000000000HB02 /* HostBannerView.swift in Sources */,
+				VP000001000000000000VP02 /* ViewerControlPill.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -1,6 +1,7 @@
 import SwiftUI
 import MetalKit
 import CoreVideo
+import Combine
 
 // MARK: - SwiftUI wrapper
 
@@ -31,6 +32,10 @@ final class VideoRenderer: NSObject, MTKViewDelegate {
 
     let device: MTLDevice
     weak var view: MTKView?
+
+    /// Set once on the first decoded frame. Dimensions are in physical pixels (not points).
+    /// AppDelegate observes this to size the viewer window at 1:1 or scale-to-fit.
+    @Published private(set) var sourceDimensions: CGSize? = nil
 
     private let commandQueue: MTLCommandQueue
     private let pipelineState: MTLRenderPipelineState
@@ -68,6 +73,12 @@ final class VideoRenderer: NSObject, MTKViewDelegate {
     // MARK: - Feed decoded frames
 
     func enqueue(pixelBuffer: CVPixelBuffer) {
+        if sourceDimensions == nil {
+            sourceDimensions = CGSize(
+                width:  CVPixelBufferGetWidth(pixelBuffer),
+                height: CVPixelBufferGetHeight(pixelBuffer)
+            )
+        }
         bufferLock.lock()
         currentPixelBuffer = pixelBuffer
         bufferLock.unlock()

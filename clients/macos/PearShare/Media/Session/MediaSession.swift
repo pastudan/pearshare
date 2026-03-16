@@ -41,8 +41,8 @@ final class MediaSession: NSObject {
     nonisolated(unsafe) private var videoSendConnection: NWConnection?
 
     var onStop: (() -> Void)?
-    /// Window title to exclude from screen capture (the remote cursor overlay).
-    var overlayWindowTitle: String?
+    /// Window titles to exclude from screen capture (cursor overlay windows).
+    var overlayWindowTitles: [String] = []
 
     // MARK: - Init
 
@@ -103,6 +103,7 @@ final class MediaSession: NSObject {
         capture.delegate = self
         capture.framesPerSecond = 30
         capture.excludedBundleIDs = ExcludedAppsStore.shared.enabledBundleIDs
+        capture.excludedWindowTitles = overlayWindowTitles
         try await capture.startCapture(display: display)
         self.captureManager = capture
         logger.info("Host: capture started")
@@ -232,7 +233,9 @@ extension MediaSession: H264EncoderDelegate {
 extension MediaSession: H264DecoderDelegate {
     nonisolated func h264Decoder(_ decoder: H264Decoder, didDecodeFrame pixelBuffer: CVPixelBuffer, presentationTimestamp: CMTime) {
         logger.info("Viewer: decoded frame, enqueueing to renderer")
-        renderer?.enqueue(pixelBuffer: pixelBuffer)
+        Task { @MainActor in
+            renderer?.enqueue(pixelBuffer: pixelBuffer)
+        }
     }
 }
 // MARK: - Error

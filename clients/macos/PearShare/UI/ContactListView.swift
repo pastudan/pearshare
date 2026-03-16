@@ -237,8 +237,10 @@ struct PeerRowView: View {
                 Button {
                     onAlwaysAllow()
                 } label: {
-                    Label("Always Allow (Trusted Device)...", systemImage: "lock.open")
+                    Label("Always Allow (Auto-answer for this device)", systemImage: "lock.open")
                 }
+                .disabled(peer.publicKey == nil || peer.publicKey?.isEmpty == true)
+                .help(peer.publicKey == nil ? "Peer must be running a compatible PearShare to add" : "When this device calls you, you'll auto-answer and share your screen")
             }
         }
     }

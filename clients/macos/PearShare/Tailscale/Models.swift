@@ -66,6 +66,8 @@ struct PearPeer: Identifiable, Equatable {
     let appVersion: String
     var status: PearStatus
     var lastSeen: Date
+    /// Ed25519 public key (base64) advertised in beacon — used when granting "auto-answer" trust.
+    let publicKey: String?
 
     static func == (lhs: PearPeer, rhs: PearPeer) -> Bool {
         lhs.id == rhs.id

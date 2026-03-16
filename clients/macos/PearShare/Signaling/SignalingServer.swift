@@ -12,13 +12,13 @@ protocol SignalingServerDelegate: AnyObject {
     /// `intent` is "share" (caller sharing) or "request" (caller asking callee to share).
     func signalingServer(_ server: SignalingServer, receivedRingFrom peer: PearPeer, client: SignalingClient, intent: String)
 
-    /// A ring arrived from a trusted device with a valid token — silently start the session.
-    func signalingServer(_ server: SignalingServer, autoAcceptedRingFrom peer: PearPeer, descriptor: SessionDescriptor)
+    /// A ring arrived from a caller we trust (signature over nonce verified) — silently start the session.
+    func signalingServer(_ server: SignalingServer, autoAcceptedRingFrom peer: PearPeer, descriptor: SessionDescriptor, intent: String)
 }
 
 // MARK: - SignalingServer
 
-/// Listens on TCP port 5534 for incoming ring requests and trust-grant messages from peers.
+/// Listens on TCP port 5534 for incoming ring requests from peers.
 final class SignalingServer {
     static let port: UInt16 = 5534
 
@@ -94,14 +94,6 @@ final class SignalingServer {
             }
             handleRing(ring, senderIP: senderIP, connection: connection)
 
-        case "trustGrant":
-            guard let grant = try? JSONDecoder().decode(TrustGrantMessage.self, from: data) else {
-                connection.cancel()
-                return
-            }
-            handleTrustGrant(grant, senderIP: senderIP)
-            connection.cancel()
-
         default:
             logger.info("SignalingServer: unknown message type '\(envelope.type)', ignoring")
             connection.cancel()
@@ -119,47 +111,35 @@ final class SignalingServer {
             platform: "unknown",
             appVersion: ring.version,
             status: .available,
-            lastSeen: Date()
+            lastSeen: Date(),
+            publicKey: nil
         )
         let client = SignalingClient(existingConnection: connection, peer: peer)
 
-        // Check for a valid trusted token — auto-accept without any UI
-        if let token = ring.trustedToken,
-           TrustedDeviceStore.shared.isTokenValid(token, for: senderIP) {
-            logger.info("SignalingServer: auto-accepting ring from trusted device \(senderIP)")
-            // Auto-accept: send accept message immediately, no UI
-            client.accept()
+        // Pubkey-based auto-answer: we have caller's pubkey in our trusted list and they proved identity
+        if let nonceB64 = ring.nonce,
+           let sigB64 = ring.signature,
+           let nonce = Data(base64Encoded: nonceB64),
+           let signature = Data(base64Encoded: sigB64),
+           TrustedDeviceStore.shared.verify(signature: signature, nonce: nonce, for: senderIP) {
+            logger.info("SignalingServer: auto-accepting ring from trusted caller \(senderIP)")
+            let sessionId = client.accept()
             let descriptor = SessionDescriptor(
-                sessionId: UUID().uuidString,
+                sessionId: sessionId,
                 peerIP: senderIP,
                 videoPort: 5535,
                 audioPort: 5536,
                 controlPort: 5537
             )
+            let intent = ring.intent
             Task { @MainActor in
-                self.delegate?.signalingServer(self, autoAcceptedRingFrom: peer, descriptor: descriptor)
+                self.delegate?.signalingServer(self, autoAcceptedRingFrom: peer, descriptor: descriptor, intent: intent)
             }
         } else {
-            // Normal ring — show the incoming call UI
             Task { @MainActor in
                 self.delegate?.signalingServer(self, receivedRingFrom: peer, client: client, intent: ring.intent)
             }
         }
-    }
-
-    // MARK: - Trust grant handling
-
-    private func handleTrustGrant(_ grant: TrustGrantMessage, senderIP: String) {
-        // The granter (our peer) is telling us they've trusted us.
-        // We store the token under the granter's peer ID so we can include it in future rings.
-        let device = TrustedDevice(
-            peerID: grant.granterPeerID.isEmpty ? senderIP : grant.granterPeerID,
-            displayName: grant.granterDisplayName,
-            token: grant.token,
-            grantedAt: Date()
-        )
-        TrustedDeviceStore.shared.grant(device)
-        logger.info("SignalingServer: received and stored trust grant from \(grant.granterDisplayName)")
     }
 
     // MARK: - Helpers

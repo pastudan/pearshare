@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import Security
 import OSLog
 
 private let logger = Logger(subsystem: "com.pearshare.app", category: "SignalingClient")
@@ -19,7 +20,6 @@ enum RingOutcome {
 /// Used for both:
 /// - Outbound rings (we dial the peer's port 5534)
 /// - Responding to inbound rings (server hands us the already-connected NWConnection)
-/// - Sending trust grant messages to a peer
 final class SignalingClient {
     private let peer: PearPeer
     private weak var peerStore: PeerStore?
@@ -107,15 +107,25 @@ final class SignalingClient {
     private var ringIntent: String = "share"
 
     private func sendRing() {
-        // Include a trusted token if we hold one for this peer — enables auto-accept on their end
-        let token = TrustedDeviceStore.shared.token(for: peer.id)
+        // Prove identity for auto-answer: sign a nonce so callee can verify with our pubkey
+        var nonceB64: String?
+        var sigB64: String?
+        var nonceBytes = [UInt8](repeating: 0, count: 32)
+        if SecRandomCopyBytes(kSecRandomDefault, 32, &nonceBytes) == errSecSuccess {
+            let nonce = Data(nonceBytes)
+            if let sig = IdentityStore.shared.sign(nonce) {
+                nonceB64 = nonce.base64EncodedString()
+                sigB64 = sig.base64EncodedString()
+            }
+        }
         let msg = RingMessage(
             from: Host.current().localizedName ?? "PearShare",
             displayName: Host.current().localizedName ?? "PearShare",
-            tailscaleIP: "", // filled by receiver from connection
+            tailscaleIP: "",
             version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0",
-            trustedToken: token,
-            intent: ringIntent
+            intent: ringIntent,
+            nonce: nonceB64,
+            signature: sigB64
         )
         send(msg)
     }
@@ -174,8 +184,8 @@ final class SignalingClient {
 
     // MARK: - Inbound: callee responses
 
-    func accept() {
-        let sessionId = UUID().uuidString
+    @discardableResult
+    func accept(sessionId: String = UUID().uuidString) -> String {
         let msg = AcceptMessage(
             sessionId: sessionId,
             videoPort: 5535,
@@ -183,6 +193,7 @@ final class SignalingClient {
             controlPort: 5537
         )
         send(msg)
+        return sessionId
     }
 
     func reject(reason: String) {
@@ -193,45 +204,6 @@ final class SignalingClient {
     func hangup() {
         send(HangupMessage())
         connection?.cancel()
-    }
-
-    // MARK: - Trust grant
-
-    /// Opens a short-lived TCP connection to the peer and sends a TrustGrantMessage.
-    /// This tells the peer "I have trusted you; here is the token to include in future rings to me."
-    ///
-    /// - Parameters:
-    ///   - token: The shared secret to send (stored on both sides).
-    ///   - myDisplayName: Our display name, shown in the peer's trusted-devices list.
-    ///   - myPeerID: Our Tailscale IP, used as the key on the peer's side.
-    func sendTrustGrant(token: String, myDisplayName: String, myPeerID: String) {
-        let conn = NWConnection(
-            host: NWEndpoint.Host(peer.tailscaleIP),
-            port: NWEndpoint.Port(rawValue: SignalingServer.port)!,
-            using: .tcp
-        )
-
-        conn.stateUpdateHandler = { [weak conn] state in
-            switch state {
-            case .ready:
-                let msg = TrustGrantMessage(
-                    token: token,
-                    granterDisplayName: myDisplayName,
-                    granterPeerID: myPeerID
-                )
-                guard var data = try? JSONEncoder().encode(msg) else { return }
-                data.append(0x0A)
-                conn?.send(content: data, completion: .contentProcessed { _ in
-                    conn?.cancel()
-                })
-            case .failed(let error):
-                logger.error("SignalingClient: trust grant send failed: \(error)")
-            default:
-                break
-            }
-        }
-        conn.start(queue: .global(qos: .userInitiated))
-        logger.info("SignalingClient: sending trust grant to \(self.peer.tailscaleIP)")
     }
 
     // MARK: - Send helper

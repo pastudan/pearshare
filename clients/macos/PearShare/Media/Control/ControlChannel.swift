@@ -7,33 +7,51 @@ import OSLog
 private let logger = Logger(subsystem: "com.pearshare.app", category: "ControlChannel")
 
 // MARK: - ControlChannel
+//
+// Multiplayer cursor model:
+//
+//   Host side  — listens on UDP port 5537.
+//     • Always tracks viewer's cursor position → fires onRemoteCursorMoved (for blue overlay).
+//     • Injects viewer's movements as CGEvents only when currentController == .viewer.
+//     • Monitors its own local mouse; fires onHostCursorMoved so AppDelegate can show the
+//       host's red "ghost" overlay when viewer has control.
+//     • When a viewer mouseDown arrives and controller is .host → transfer to .viewer,
+//       enable CGEventTap to suppress physical mouse, notify viewer via peerConnection.
+//     • When a host physical mouseDown is intercepted by the tap → transfer to .host,
+//       disable CGEventTap, notify viewer.
+//     • Injected CGEvents are tagged with eventSourceUserData so the tap lets them through.
+//
+//   Viewer side — connects to host's UDP port 5537 (bidirectional).
+//     • Sends mouseMoved / mouseButton / scroll / keyEvent events to host.
+//     • Listens on the same connection for incoming controlTransfer packets from host.
+//     • Fires onControlTransfer so AppDelegate can show/hide the viewer's local blue overlay.
+//     • Fires onLocalCursorMoved with the viewer's screen-space cursor position so AppDelegate
+//       can reposition the viewer's local blue overlay.
 
-/// Manages the bidirectional remote-control data channel on UDP port 5537.
-///
-/// Viewer side: installs NSEvent global monitors, serialises events as JSON, and
-///   sends them over a NWConnection to the host.
-///
-/// Host side: listens on NWListener, deserialises events, injects them via CGEvent,
-///   and repositions the RemoteCursorOverlayWindow to show the remote pointer.
-///
-/// ScreenHero last-touch model: no locking — both parties can act freely. The host
-///   always sees the remote cursor as a teal-ring overlay separate from their own.
 @MainActor
 final class ControlChannel {
 
     enum Role { case viewer, host }
 
-    // Callback fired on the main actor when a remote mouse event arrives (host side).
-    // Provides the screen-space point so callers can reposition the overlay.
-    var onRemoteCursorMoved: ((NSPoint) -> Void)?
+    // MARK: - Shared callbacks (set by AppDelegate after start())
 
-    // Callback fired on host when any input event arrives — used to show the
-    // "last-touch" badge in the session toolbar.
-    var onRemoteActivity: (() -> Void)?
+    /// Host: viewer's cursor moved — reposition viewer's blue overlay.
+    var onRemoteCursorMoved: ((NSPoint) -> Void)?
+    /// Host: host's own physical cursor moved while viewer has control — reposition red ghost overlay.
+    var onHostCursorMoved: ((NSPoint) -> Void)?
+    /// Both sides: control transferred — AppDelegate shows/hides overlays accordingly.
+    var onControlTransfer: ((ControlEvent.Controller) -> Void)?
+    /// Viewer: local cursor moved — AppDelegate repositions viewer's local blue overlay.
+    var onLocalCursorMoved: ((NSPoint) -> Void)?
+
+    // MARK: - Private state
 
     private let role: Role
     private let port: Int
-    private let peerIP: String?         // non-nil on viewer side
+    private let peerIP: String?
+
+    /// Viewer side: set by AppDelegate so coordinates are normalised to the session window.
+    var sessionWindowFrameProvider: (() -> NSRect?)? = nil
 
     // Viewer side
     private var sendConnection: NWConnection?
@@ -41,6 +59,19 @@ final class ControlChannel {
 
     // Host side
     private var recvListener: NWListener?
+    /// The NWConnection to the viewer — stored so host can send controlTransfer back.
+    private var peerConnection: NWConnection?
+    /// Who currently drives the system cursor.
+    private var currentController: ControlEvent.Controller = .host
+    /// Persistent absolute position of the host's cursor (independent of the system cursor).
+    private var hostPosition: NSPoint = .zero
+    /// Tracks host's physical mouse while host has control so hostPosition stays current.
+    private var hostMouseMonitor: Any?
+    /// Fallback global monitor for host reclaim click (in case the tap misses).
+    private var hostMouseDownMonitor: Any?
+    /// CGEventTap that suppresses host's physical mouse while viewer has control.
+    /// Injected events are tagged so the tap lets them through.
+    private let suppressionTap = MouseSuppressionTap()
 
     // MARK: - Init
 
@@ -60,17 +91,20 @@ final class ControlChannel {
     }
 
     func stop() {
-        // Tear down monitors
         for m in eventMonitors { NSEvent.removeMonitor(m) }
         eventMonitors.removeAll()
+        if let m = hostMouseMonitor     { NSEvent.removeMonitor(m); hostMouseMonitor = nil }
+        if let m = hostMouseDownMonitor { NSEvent.removeMonitor(m); hostMouseDownMonitor = nil }
+        suppressionTap.disable()
 
         sendConnection?.cancel()
         sendConnection = nil
+        peerConnection = nil
         recvListener?.cancel()
         recvListener = nil
     }
 
-    // MARK: - Viewer: capture events and send
+    // MARK: - VIEWER SIDE ─────────────────────────────────────────────────────────
 
     private func startViewerSide() {
         guard let ip = peerIP else { return }
@@ -85,239 +119,422 @@ final class ControlChannel {
         conn.start(queue: .global(qos: .userInteractive))
         self.sendConnection = conn
 
+        // Listen on the same connection for controlTransfer packets sent by the host.
+        receiveFromHost(on: conn)
         installEventMonitors()
     }
 
-    private func installEventMonitors() {
-        // We need BOTH local and global monitors:
-        //   - addLocalMonitorForEvents  fires when the event is targeted at our app's windows (window in focus)
-        //   - addGlobalMonitorForEvents fires for events delivered to OTHER apps (window not in focus)
-        // Together they cover 100% of input regardless of whether the session window is key.
+    /// Receive loop for host→viewer messages on the viewer's outbound connection.
+    nonisolated private func receiveFromHost(on connection: NWConnection) {
+        connection.receiveMessage { [weak self] data, _, _, error in
+            guard let self else { return }
+            if let error { logger.error("ControlChannel viewer recv error: \(error)"); return }
+            if let data, let event = ControlEvent.from(data: data) {
+                Task { @MainActor in self.handleViewerIncoming(event) }
+            }
+            self.receiveFromHost(on: connection)
+        }
+    }
 
-        // Mouse moved — throttled to ≈60 Hz to avoid flooding the control channel.
+    @MainActor
+    private func handleViewerIncoming(_ event: ControlEvent) {
+        guard case .controlTransfer(let controller) = event else { return }
+        logger.info("ControlChannel viewer: control transferred to \(controller.rawValue)")
+        onControlTransfer?(controller)
+    }
+
+    // MARK: - Viewer event monitors
+
+    private func installEventMonitors() {
+        func addLocal(_ mask: NSEvent.EventTypeMask, handler: @escaping (NSEvent) -> Void) {
+            if let m = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { e in
+                handler(e); return e
+            }) { eventMonitors.append(m) }
+        }
+
         var lastMoveSent: TimeInterval = 0
-        let moveHandler: (NSEvent) -> Void = { [weak self] event in
+        addLocal(.mouseMoved) { [weak self] _ in
+            guard let self, self.isMouseInsideWindow() else { return }
             let now = Date().timeIntervalSinceReferenceDate
             guard now - lastMoveSent > 0.016 else { return }
             lastMoveSent = now
-            self?.sendMouseMoved(event: event)
-        }
-        if let m = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved, handler: moveHandler) {
-            eventMonitors.append(m)
-        }
-        // Local monitor must return the event (returning nil would swallow it)
-        if let m = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved, handler: { event in
-            moveHandler(event); return event
-        }) { eventMonitors.append(m) }
-
-        // Helper to register both a global and local monitor for the same mask + handler.
-        // Local monitors must return the event; retning nil would swallow it.
-        func addBoth(_ mask: NSEvent.EventTypeMask, handler: @escaping (NSEvent) -> Void) {
-            if let m = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: handler) { eventMonitors.append(m) }
-            if let m = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { e in handler(e); return e }) { eventMonitors.append(m) }
+            let pt = NSEvent.mouseLocation
+            self.onLocalCursorMoved?(pt)
+            let (x, y) = self.normalise(screenPoint: pt)
+            self.send(.mouseMoved(x: x, y: y))
         }
 
-        // Left mouse button
-        addBoth(.leftMouseDown) { [weak self] event in self?.sendMouseButton(event: event, button: .left,  down: true)  }
-        addBoth(.leftMouseUp)   { [weak self] event in self?.sendMouseButton(event: event, button: .left,  down: false) }
+        addLocal(.leftMouseDown)  { [weak self] _ in guard self?.isMouseInsideWindow() == true else { return }; self?.sendButton(.left,  down: true)  }
+        addLocal(.leftMouseUp)    { [weak self] _ in guard self?.isMouseInsideWindow() == true else { return }; self?.sendButton(.left,  down: false) }
+        addLocal(.rightMouseDown) { [weak self] _ in guard self?.isMouseInsideWindow() == true else { return }; self?.sendButton(.right, down: true)  }
+        addLocal(.rightMouseUp)   { [weak self] _ in guard self?.isMouseInsideWindow() == true else { return }; self?.sendButton(.right, down: false) }
+        addLocal(.scrollWheel)    { [weak self] e  in guard self?.isMouseInsideWindow() == true else { return }; self?.sendScrollEvent(e) }
 
-        // Right mouse button
-        addBoth(.rightMouseDown) { [weak self] event in self?.sendMouseButton(event: event, button: .right, down: true)  }
-        addBoth(.rightMouseUp)   { [weak self] event in self?.sendMouseButton(event: event, button: .right, down: false) }
-
-        // Scroll wheel
-        addBoth(.scrollWheel) { [weak self] event in self?.sendScroll(event: event) }
-
-        // Key down / up — local monitor returns event so the app still handles it normally
-        addBoth(.keyDown) { [weak self] event in self?.sendKey(event: event, down: true)  }
-        addBoth(.keyUp)   { [weak self] event in self?.sendKey(event: event, down: false) }
+        addLocal(.keyDown) { [weak self] e in self?.sendKey(e, down: true)  }
+        addLocal(.keyUp)   { [weak self] e in self?.sendKey(e, down: false) }
     }
 
-    // MARK: - Coordinate normalisation (viewer → host)
+    private func isMouseInsideWindow() -> Bool {
+        guard let frame = sessionWindowFrameProvider?() else { return false }
+        return frame.contains(NSEvent.mouseLocation)
+    }
 
-    /// Converts an NSEvent screen point to normalized [0,1] coords on the main display.
-    /// NSEvent.mouseLocation is in AppKit screen coords (origin = bottom-left of screen 0).
     private func normalise(screenPoint: NSPoint) -> (x: Double, y: Double) {
-        guard let screen = NSScreen.main else { return (0.5, 0.5) }
-        let frame = screen.frame
-        // Normalize within the screen frame; clamp to [0,1]
+        let frame: NSRect
+        if let f = sessionWindowFrameProvider?() { frame = f }
+        else if let s = NSScreen.main           { frame = s.frame }
+        else                                     { return (0.5, 0.5) }
+        guard frame.width > 0, frame.height > 0 else { return (0.5, 0.5) }
         let nx = max(0, min(1, Double((screenPoint.x - frame.origin.x) / frame.width)))
-        // AppKit Y is bottom-up; convert to top-down for the wire format
         let ny = max(0, min(1, Double(1.0 - (screenPoint.y - frame.origin.y) / frame.height)))
         return (nx, ny)
     }
 
-    // MARK: - Send helpers
+    // MARK: - Viewer send helpers
 
-    private func sendMouseMoved(event: NSEvent) {
-        let (x, y) = normalise(screenPoint: NSEvent.mouseLocation)
-        send(.mouseMoved(x: x, y: y))
-    }
-
-    private func sendMouseButton(event: NSEvent, button: ControlEvent.MouseButton, down: Bool) {
+    private func sendButton(_ button: ControlEvent.MouseButton, down: Bool) {
         let (x, y) = normalise(screenPoint: NSEvent.mouseLocation)
         send(.mouseButton(x: x, y: y, button: button, down: down))
     }
 
-    private func sendScroll(event: NSEvent) {
+    private func sendScrollEvent(_ event: NSEvent) {
         let (x, y) = normalise(screenPoint: NSEvent.mouseLocation)
         send(.scroll(x: x, y: y, dx: Double(event.scrollingDeltaX), dy: Double(event.scrollingDeltaY)))
     }
 
-    private func sendKey(event: NSEvent, down: Bool) {
-        send(.keyEvent(keyCode: event.keyCode,
-                       modifiers: UInt64(event.modifierFlags.rawValue),
-                       down: down))
+    private func sendKey(_ event: NSEvent, down: Bool) {
+        send(.keyEvent(keyCode: event.keyCode, modifiers: UInt64(event.modifierFlags.rawValue), down: down))
     }
 
     private func send(_ event: ControlEvent) {
-        guard let data = event.toData(),
-              let conn = sendConnection else { return }
+        guard let data = event.toData(), let conn = sendConnection else { return }
         conn.send(content: data, completion: .idempotent)
     }
 
-    // MARK: - Host: receive events and inject
+    // MARK: - HOST SIDE ───────────────────────────────────────────────────────────
 
     private func startHostSide() {
         let params = NWParameters.udp
         params.allowLocalEndpointReuse = true
-
-        guard let listener = try? NWListener(
-            using: params,
-            on: NWEndpoint.Port(rawValue: UInt16(port))!
-        ) else {
+        guard let listener = try? NWListener(using: params,
+                                              on: NWEndpoint.Port(rawValue: UInt16(port))!) else {
             logger.error("ControlChannel host: failed to bind port \(self.port)")
             return
         }
-
         listener.stateUpdateHandler = { state in
             logger.info("ControlChannel host listener \(String(describing: state))")
         }
-
         listener.newConnectionHandler = { [weak self] conn in
             conn.start(queue: .global(qos: .userInteractive))
             guard let self else { return }
-            self.receiveEvents(from: conn)
+            Task { @MainActor in self.peerConnection = conn }
+            self.receiveFromViewer(on: conn)
         }
         listener.start(queue: .global(qos: .userInteractive))
         self.recvListener = listener
         logger.info("ControlChannel host: listening on port \(self.port)")
-    }
 
-    nonisolated private func receiveEvents(from connection: NWConnection) {
-        connection.receiveMessage { [weak self] data, _, _, error in
-            guard let self else { return }
-            if let error {
-                logger.error("ControlChannel host receive error: \(error)")
-                return
-            }
-            if let data, let event = ControlEvent.from(data: data) {
-                Task { @MainActor in
-                    self.handleRemoteEvent(event)
-                }
-            }
-            // Loop
-            self.receiveEvents(from: connection)
+        hostPosition = NSEvent.mouseLocation
+        installHostMouseMonitors()
+
+        suppressionTap.onGhostMoved = { [weak self] pos in
+            self?.hostPosition = pos
+            Task { @MainActor in self?.onHostCursorMoved?(pos) }
+        }
+        suppressionTap.onReclaim = { [weak self] in
+            Task { @MainActor in self?.hostDidClick() }
         }
     }
 
-    // MARK: - Event injection (host)
+    /// Global monitors for the host's physical cursor.
+    /// The move monitor must guard on currentController == .host because tagged injected
+    /// events (from the viewer) also pass through the tap and reach NSEvent monitors —
+    /// without the guard, hostPosition would be overwritten with the viewer's position.
+    /// The mouseDown monitor is a fallback for reclaim if the tap misses.
+    private func installHostMouseMonitors() {
+        hostMouseMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged]
+        ) { [weak self] _ in
+            guard self?.currentController == .host else { return }
+            self?.hostPosition = NSEvent.mouseLocation
+        }
+
+        hostMouseDownMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] event in
+            // Tagged events are injected viewer clicks that passed through the suppression tap.
+            // Never treat them as a host reclaim — that would bounce control back immediately.
+            if event.cgEvent?.getIntegerValueField(.eventSourceUserData) == MouseSuppressionTap.eventTag { return }
+            Task { @MainActor in self?.hostDidClick() }
+        }
+    }
 
     @MainActor
-    private func handleRemoteEvent(_ event: ControlEvent) {
-        switch event {
-        case .mouseMoved(let nx, let ny):
-            let pt = displayPoint(nx: nx, ny: ny)
-            moveCGCursor(to: pt)
-            // Convert CG screen coords (top-left origin) → AppKit (bottom-left origin)
-            let appKitPt = cgPointToAppKit(pt)
-            onRemoteCursorMoved?(appKitPt)
-            onRemoteActivity?()
+    private func hostDidClick() {
+        guard currentController == .viewer else { return }
+        transferControl(to: .host)
+    }
 
-        case .mouseButton(let nx, let ny, let button, let down):
-            let pt = displayPoint(nx: nx, ny: ny)
-            injectMouseButton(at: pt, button: button, down: down)
-            onRemoteActivity?()
+    // MARK: - Host receive loop
 
-        case .scroll(let nx, let ny, let dx, let dy):
-            let pt = displayPoint(nx: nx, ny: ny)
-            injectScroll(at: pt, dx: dx, dy: dy)
-            onRemoteActivity?()
-
-        case .keyEvent(let keyCode, let modifiers, let down):
-            injectKey(keyCode: keyCode, modifiers: modifiers, down: down)
-            onRemoteActivity?()
+    nonisolated private func receiveFromViewer(on connection: NWConnection) {
+        connection.receiveMessage { [weak self] data, _, _, error in
+            guard let self else { return }
+            if let error { logger.error("ControlChannel host recv error: \(error)"); return }
+            if let data, let event = ControlEvent.from(data: data) {
+                Task { @MainActor in self.handleViewerEvent(event) }
+            }
+            self.receiveFromViewer(on: connection)
         }
     }
 
-    // MARK: - Coordinate mapping (host)
+    @MainActor
+    private func handleViewerEvent(_ event: ControlEvent) {
+        switch event {
+        case .mouseMoved(let nx, let ny):
+            let cgPt   = displayPoint(nx: nx, ny: ny)
+            let appKit = cgPointToAppKit(cgPt)
+            onRemoteCursorMoved?(appKit)
+            if currentController == .viewer { moveCGCursor(to: cgPt) }
 
-    /// Maps normalized [0,1] coords to CGDisplay pixel space (origin = top-left).
+        case .mouseButton(let nx, let ny, let button, let down):
+            let cgPt = displayPoint(nx: nx, ny: ny)
+            // First viewer click transfers control; subsequent clicks are injected normally.
+            if down && currentController == .host {
+                transferControl(to: .viewer)
+            }
+            if currentController == .viewer {
+                injectMouseButton(at: cgPt, button: button, down: down)
+            }
+
+        case .scroll(let nx, let ny, let dx, let dy):
+            if currentController == .viewer {
+                injectScroll(at: displayPoint(nx: nx, ny: ny), dx: dx, dy: dy)
+            }
+
+        case .keyEvent(let keyCode, let modifiers, let down):
+            if currentController == .viewer {
+                injectKey(keyCode: keyCode, modifiers: modifiers, down: down)
+            }
+
+        case .controlTransfer:
+            break  // host never receives this (it only sends it)
+        }
+    }
+
+    // MARK: - Control transfer
+
+    @MainActor
+    private func transferControl(to newController: ControlEvent.Controller) {
+        guard newController != currentController else { return }
+        currentController = newController
+        logger.info("ControlChannel host: control → \(newController.rawValue)")
+
+        if newController == .viewer {
+            suppressionTap.enable(initialPosition: hostPosition)
+        } else {
+            // Warp the system cursor to the host's tracked position so the host
+            // continues from their own position, not from the viewer's.
+            let screenH = CGFloat(CGDisplayPixelsHigh(CGMainDisplayID()))
+            CGWarpMouseCursorPosition(CGPoint(x: hostPosition.x, y: screenH - hostPosition.y))
+            suppressionTap.disable()
+        }
+
+        if let data = ControlEvent.controlTransfer(controller: newController).toData() {
+            peerConnection?.send(content: data, completion: .idempotent)
+        }
+
+        onControlTransfer?(newController)
+    }
+
+    // MARK: - Coordinate helpers (host)
+
     private func displayPoint(nx: Double, ny: Double) -> CGPoint {
         let w = CGFloat(CGDisplayPixelsWide(CGMainDisplayID()))
         let h = CGFloat(CGDisplayPixelsHigh(CGMainDisplayID()))
         return CGPoint(x: nx * w, y: ny * h)
     }
 
-    /// Converts a CG screen point (origin top-left) to AppKit screen coords (origin bottom-left).
     private func cgPointToAppKit(_ pt: CGPoint) -> NSPoint {
         let h = CGFloat(CGDisplayPixelsHigh(CGMainDisplayID()))
         return NSPoint(x: pt.x, y: h - pt.y)
     }
 
-    // MARK: - CGEvent injection
+    // MARK: - CGEvent injection (host)
+
+    // A dedicated CGEventSource whose userData == eventTag.
+    // Using a proper source (rather than setting the field post-hoc on a nil-source event)
+    // ensures the tag survives the event pipeline and is reliably readable in NSEvent monitors.
+    // Events are posted at .cgsessionEventTap — downstream of our HID suppression tap —
+    // so injected events can never re-enter the tap and corrupt the ghost position delta math.
+    private static let injectionSource: CGEventSource = {
+        guard let src = CGEventSource(stateID: .combinedSessionState) else {
+            fatalError("CGEventSource unavailable")
+        }
+        src.userData = MouseSuppressionTap.eventTag
+        return src
+    }()
+
+    private func postInjected(_ event: CGEvent) {
+        // kCGSessionEventTap (rawValue 1) is downstream of our HID suppression tap,
+        // so injected events never re-enter the tap and corrupt the ghost position delta math.
+        event.post(tap: CGEventTapLocation(rawValue: 1)!)
+    }
 
     private func moveCGCursor(to pt: CGPoint) {
-        // Move only the on-screen cursor — use a mouseMoved event so Dock/menu bar
-        // hover states update, but don't generate a click.
-        guard let e = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
-                              mouseCursorPosition: pt, mouseButton: .left) else { return }
-        e.post(tap: .cghidEventTap)
+        // CGWarpMouseCursorPosition moves the cursor WITHOUT generating any mouse event.
+        // Injecting a mouseMoved CGEvent causes macOS to synthesize a HID-level mouseMoved
+        // with the cursor position jump as deltaX/Y — which hits our tap as tag:0 and
+        // corrupts the ghost position delta accumulation. Warp is silent at every level.
+        CGWarpMouseCursorPosition(pt)
     }
 
     private func injectMouseButton(at pt: CGPoint, button: ControlEvent.MouseButton, down: Bool) {
-        let cgButton: CGMouseButton
-        let downType: CGEventType
-        let upType: CGEventType
-
+        let (cgButton, downType, upType): (CGMouseButton, CGEventType, CGEventType)
         switch button {
-        case .left:
-            cgButton  = .left
-            downType  = .leftMouseDown
-            upType    = .leftMouseUp
-        case .right:
-            cgButton  = .right
-            downType  = .rightMouseDown
-            upType    = .rightMouseUp
-        case .other:
-            cgButton  = .center
-            downType  = .otherMouseDown
-            upType    = .otherMouseUp
+        case .left:  (cgButton, downType, upType) = (.left,  .leftMouseDown,  .leftMouseUp)
+        case .right: (cgButton, downType, upType) = (.right, .rightMouseDown, .rightMouseUp)
+        case .other: (cgButton, downType, upType) = (.center,.otherMouseDown, .otherMouseUp)
         }
-
-        let type = down ? downType : upType
-        guard let e = CGEvent(mouseEventSource: nil, mouseType: type,
+        // Warp cursor to the click position first so the button event injection doesn't
+        // carry a cursor position jump — eliminating any synthetic HID move side-effects.
+        CGWarpMouseCursorPosition(pt)
+        guard let e = CGEvent(mouseEventSource: Self.injectionSource,
+                              mouseType: down ? downType : upType,
                               mouseCursorPosition: pt, mouseButton: cgButton) else { return }
-        e.post(tap: .cghidEventTap)
+        postInjected(e)
     }
 
     private func injectScroll(at pt: CGPoint, dx: Double, dy: Double) {
-        // CGEventCreateScrollWheelEvent uses integer line deltas; scale the fractional
-        // pixel deltas from the viewer to line units (1 line ≈ 10 pixels).
         let lines = Int32(dy / 10)
-        guard let e = CGEvent(scrollWheelEvent2Source: nil,
-                              units: .line,
-                              wheelCount: 1,
-                              wheel1: lines,
-                              wheel2: 0,
-                              wheel3: 0) else { return }
+        guard let e = CGEvent(scrollWheelEvent2Source: Self.injectionSource, units: .line,
+                              wheelCount: 1, wheel1: lines, wheel2: 0, wheel3: 0) else { return }
         e.location = pt
-        e.post(tap: .cghidEventTap)
+        postInjected(e)
     }
 
     private func injectKey(keyCode: UInt16, modifiers: UInt64, down: Bool) {
-        guard let e = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: down) else { return }
+        guard let e = CGEvent(keyboardEventSource: Self.injectionSource,
+                              virtualKey: keyCode, keyDown: down) else { return }
         e.flags = CGEventFlags(rawValue: modifiers)
-        e.post(tap: .cghidEventTap)
+        postInjected(e)
+    }
+}
+
+// MARK: - MouseSuppressionTap ─────────────────────────────────────────────────
+//
+// Intercepts physical mouse events via a CGEventTap installed at cghidEventTap.
+// When enabled, physical mouse movement is suppressed (the system cursor doesn't move),
+// but injected events tagged with `eventTag` pass through normally.
+// Tracks the host's virtual ghost cursor position via raw deltas.
+
+private final class MouseSuppressionTap {
+
+    static let eventTag: Int64 = 0x50454152 // "PEAR"
+
+    private var tap: CFMachPort?
+    private var runLoopSource: CFRunLoopSource?
+    private(set) var ghostPosition: NSPoint = .zero
+
+    var onGhostMoved: ((NSPoint) -> Void)?
+    var onReclaim: (() -> Void)?
+
+    func enable(initialPosition: NSPoint) {
+        guard tap == nil else { return }
+        ghostPosition = initialPosition
+
+        let mask: CGEventMask =
+            (1 << CGEventType.mouseMoved.rawValue)
+            | (1 << CGEventType.leftMouseDragged.rawValue)
+            | (1 << CGEventType.rightMouseDragged.rawValue)
+            | (1 << CGEventType.leftMouseDown.rawValue)
+            | (1 << CGEventType.rightMouseDown.rawValue)
+            | (1 << CGEventType.leftMouseUp.rawValue)
+            | (1 << CGEventType.rightMouseUp.rawValue)
+
+        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
+        guard let newTap = CGEvent.tapCreate(
+            tap: .cghidEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: mask,
+            callback: MouseSuppressionTap.tapCallback,
+            userInfo: selfPtr
+        ) else {
+            logger.error("MouseSuppressionTap: failed to create (Accessibility permission required)")
+            return
+        }
+
+        tap = newTap
+        let source = CFMachPortCreateRunLoopSource(nil, newTap, 0)
+        runLoopSource = source
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: newTap, enable: true)
+        logger.info("MouseSuppressionTap: enabled")
+    }
+
+    func disable() {
+        guard tap != nil else { return }
+        if let t = tap { CGEvent.tapEnable(tap: t, enable: false) }
+        if let s = runLoopSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), s, .commonModes) }
+        tap = nil
+        runLoopSource = nil
+        logger.info("MouseSuppressionTap: disabled")
+    }
+
+    deinit { disable() }
+
+    // MARK: - C-compatible callback
+
+    private static let tapCallback: CGEventTapCallBack = { _, type, event, userInfo in
+        guard let userInfo else { return Unmanaged.passUnretained(event) }
+        let s = Unmanaged<MouseSuppressionTap>.fromOpaque(userInfo).takeUnretainedValue()
+
+        if type == .tapDisabledByTimeout {
+            if let t = s.tap { CGEvent.tapEnable(tap: t, enable: true) }
+            return Unmanaged.passUnretained(event)
+        }
+
+        let tag = event.getIntegerValueField(.eventSourceUserData)
+
+        // Safety net: injected viewer events should be posted at kCGSessionEventTap
+        // (downstream of this HID tap) and never arrive here. Pass them through if they do.
+        if tag == MouseSuppressionTap.eventTag {
+            return Unmanaged.passUnretained(event)
+        }
+
+        switch type {
+        case .mouseMoved, .leftMouseDragged, .rightMouseDragged:
+            let dx = CGFloat(event.getDoubleValueField(.mouseEventDeltaX))
+            let dy = CGFloat(event.getDoubleValueField(.mouseEventDeltaY))
+            let magnitude = abs(dx) + abs(dy)
+
+            // After CGWarpMouseCursorPosition calls, macOS generates one corrective
+            // HID event that includes the full warp displacement as its delta. These
+            // warp-correction events have very large magnitudes (50–600px) while real
+            // physical trackpad HID events are always <30px per event at 60-120Hz.
+            guard magnitude <= 30 else { return nil }
+
+            var pos = s.ghostPosition
+            pos.x += dx
+            pos.y -= dy
+            if let screen = NSScreen.main?.frame {
+                pos.x = max(screen.minX, min(screen.maxX, pos.x))
+                pos.y = max(screen.minY, min(screen.maxY, pos.y))
+            }
+            s.ghostPosition = pos
+            s.onGhostMoved?(pos)
+            return nil
+
+        case .leftMouseDown, .rightMouseDown:
+            s.onReclaim?()
+            return nil
+
+        case .leftMouseUp, .rightMouseUp:
+            return nil
+
+        default:
+            return Unmanaged.passUnretained(event)
+        }
     }
 }

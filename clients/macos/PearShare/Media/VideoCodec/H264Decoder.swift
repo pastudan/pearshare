@@ -177,7 +177,6 @@ final class H264Decoder {
 
         var sampleBuffer: CMSampleBuffer?
         var sampleSize = avcc.count
-        let pts = CMTime(value: CMTimeValue(mach_absolute_time()), timescale: 1_000_000_000)
 
         status = CMSampleBufferCreateReady(
             allocator: nil,

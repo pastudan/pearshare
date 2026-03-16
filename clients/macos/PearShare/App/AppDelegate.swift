@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import SwiftUI
+import Combine
 import UserNotifications
 import OSLog
 
@@ -11,9 +12,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
     private var ringerWindow: NSWindow?
+
+    // Host session: small draggable banner (no full window)
+    private var hostBannerWindow: NSWindow?
+
+    // Viewer session: borderless content window
     private var sessionWindow: NSWindow?
-    private var cursorOverlayWindow: RemoteCursorOverlayWindow?
+    private var rendererCancellable: AnyCancellable?
+
     private var activeSession: MediaSession?
+    private var viewerControlPill: NSWindow?
+    private var pillObservers: [Any] = []
+
+    // Multiplayer cursor overlays:
+    //   viewerCursorOverlay  — pastel blue, shown on HOST screen when host has control
+    //   hostGhostOverlay     — pastel red,  shown on HOST screen when viewer has control
+    //   viewerLocalOverlay   — pastel blue, shown on VIEWER screen when viewer is NOT in control
+    private var viewerCursorOverlay: RemoteCursorOverlayWindow?
+    private var hostGhostOverlay: RemoteCursorOverlayWindow?
+    private var viewerLocalOverlay: RemoteCursorOverlayWindow?
 
     let peerStore = PeerStore()
     private var discovery: PeerDiscovery?
@@ -89,8 +106,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Incoming ring UI
 
     func showIncomingRing(from peer: PearPeer, client: SignalingClient, intent: String) {
-        // For a "request": caller wants us to share our screen → we become host on accept.
-        // For a "share": caller is sharing their screen → we become viewer on accept.
         let acceptRole: SessionRole = intent == "request" ? .host : .viewer
 
         let width: CGFloat = intent == "request" ? 400 : 360
@@ -128,91 +143,200 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.ringerWindow = window
     }
 
-    // MARK: - Session window
+    // MARK: - Session launch
 
     func launchSession(descriptor: SessionDescriptor, peer: PearPeer, role: SessionRole) {
-        log.info("AppDelegate: launchSession role=\(String(describing: role)) peerIP=\(descriptor.peerIP) videoPort=\(descriptor.videoPort)")
+        log.info("AppDelegate: launchSession role=\(String(describing: role)) peerIP=\(descriptor.peerIP)")
         activeSession?.stop()
 
         let session = MediaSession(descriptor: descriptor, role: role)
         activeSession = session
 
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
-            styleMask: [.titled, .closable, .resizable, .miniaturizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "PearShare — \(peer.displayName)"
-        window.center()
-
-        let remoteControlState = RemoteControlState()
-        let sessionView = SessionView(
-            session: session,
-            peer: peer,
-            remoteControlState: remoteControlState
-        ) { [weak self] in
-            self?.endSession()
-        }
-        window.contentView = NSHostingView(rootView: sessionView)
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        self.sessionWindow = window
-
         session.onStop = { [weak self] in
-            DispatchQueue.main.async {
-                self?.sessionWindow?.orderOut(nil)
-                self?.sessionWindow = nil
-                self?.activeSession = nil
-                self?.cursorOverlayWindow?.hide()
-                self?.cursorOverlayWindow = nil
-            }
+            DispatchQueue.main.async { self?.endSession() }
         }
 
-        if role == .host {
-            let overlay = RemoteCursorOverlayWindow()
-            overlay.peerDisplayName = peer.displayName
-            self.cursorOverlayWindow = overlay
-            session.overlayWindowTitle = kRemoteCursorWindowTitle
+        switch role {
+        case .host:
+            launchHostSession(session: session, peer: peer)
+        case .viewer:
+            launchViewerSession(session: session, peer: peer, descriptor: descriptor)
         }
+    }
+
+    // MARK: - Host session (floating banner, no full window)
+
+    private func launchHostSession(session: MediaSession, peer: PearPeer) {
+        // Pre-create overlays so their titles are available for SCContentFilter exclusion.
+        let vco = RemoteCursorOverlayWindow.pastelBlue(peerName: peer.displayName)
+        let hgo = RemoteCursorOverlayWindow.pastelRed(peerName: "Me")
+        self.viewerCursorOverlay = vco
+        self.hostGhostOverlay = hgo
+        session.overlayWindowTitles = [kViewerCursorWindowTitle, kHostGhostCursorWindowTitle]
+
+        let banner = HostBannerWindow.make(peer: peer) { [weak self] in self?.endSession() }
+        banner.orderFrontRegardless()
+        self.hostBannerWindow = banner
 
         Task {
             do {
-                log.info("AppDelegate: calling session.start() for role=\(String(describing: role))")
                 try await session.start()
-                log.info("AppDelegate: session.start() returned successfully")
+                guard let ctrl = session.controlChannel else { return }
 
-                if role == .host, let ctrl = session.controlChannel {
-                    let overlay = self.cursorOverlayWindow
-                    ctrl.onRemoteCursorMoved = { [weak overlay] screenPt in
-                        overlay?.moveTo(screenPoint: screenPt)
-                        overlay?.show()
-                    }
-                    ctrl.onRemoteActivity = { [weak remoteControlState] in
-                        remoteControlState?.markActive()
+                vco.show()
+                hgo.hide()
+
+                ctrl.onRemoteCursorMoved = { [weak vco] screenPt in vco?.moveTo(screenPoint: screenPt) }
+                ctrl.onHostCursorMoved   = { [weak hgo] screenPt in hgo?.moveTo(screenPoint: screenPt) }
+                ctrl.onControlTransfer   = { [weak vco, weak hgo] controller in
+                    if controller == .viewer {
+                        vco?.hide(); hgo?.show()
+                    } else {
+                        vco?.show(); hgo?.hide()
                     }
                 }
             } catch {
-                log.error("AppDelegate: session.start() threw: \(error)")
+                log.error("AppDelegate: host session.start() threw: \(error)")
                 endSession()
                 showAlert(title: "Session failed", message: error.localizedDescription)
             }
         }
     }
 
+    // MARK: - Viewer session (borderless window + floating control pill)
+
+    private func launchViewerSession(session: MediaSession, peer: PearPeer, descriptor: SessionDescriptor) {
+        let vlo = RemoteCursorOverlayWindow.pastelBlue(peerName: "Me")
+        self.viewerLocalOverlay = vlo
+
+        guard let renderer = session.renderer else { return }
+
+        // Borderless window — sized initially to 1280×800, then corrected on first frame.
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
+            styleMask: [.borderless, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.isOpaque = false
+        window.backgroundColor = .black
+        window.hasShadow = true
+        window.isMovableByWindowBackground = true
+        window.delegate = self
+        window.center()
+
+        let hostingView = NSHostingView(rootView: SessionView(renderer: renderer))
+        hostingView.wantsLayer = true
+        window.contentView = hostingView
+        hostingView.layer?.cornerRadius = 12
+        hostingView.layer?.masksToBounds = true
+
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.setActivationPolicy(.regular)
+        self.sessionWindow = window
+
+        // Observe source dimensions: size window to 1:1 or scale-to-fit on first frame.
+        rendererCancellable = renderer.$sourceDimensions
+            .compactMap { $0 }
+            .first()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self, weak window] dims in
+                guard let self, let window else { return }
+                self.applySmartWindowSize(sourceDimensions: dims, window: window)
+            }
+
+        Task {
+            do {
+                try await session.start()
+                guard let ctrl = session.controlChannel else { return }
+
+                ctrl.sessionWindowFrameProvider = { [weak window] in
+                    window?.contentView?.window?.convertToScreen(
+                        window?.contentView?.bounds ?? .zero
+                    )
+                }
+                ctrl.onLocalCursorMoved = { [weak vlo] screenPt in
+                    vlo?.moveTo(screenPoint: screenPt)
+                    vlo?.show()
+                }
+                ctrl.onControlTransfer = { [weak vlo] controller in
+                    if controller == .viewer { vlo?.hide() } else { vlo?.show() }
+                }
+            } catch {
+                log.error("AppDelegate: viewer session.start() threw: \(error)")
+                endSession()
+                showAlert(title: "Session failed", message: error.localizedDescription)
+            }
+        }
+    }
+
+    // MARK: - Smart window sizing (1:1 pixels if host fits on viewer screen, else scale-to-fit)
+
+    private func applySmartWindowSize(sourceDimensions: CGSize, window: NSWindow) {
+        let scale = window.backingScaleFactor
+        let sourcePoints = CGSize(
+            width:  sourceDimensions.width  / scale,
+            height: sourceDimensions.height / scale
+        )
+        let available = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
+
+        let fitsAt1x = sourcePoints.width  <= available.width
+                    && sourcePoints.height <= available.height
+
+        let finalSize: CGSize
+        if fitsAt1x {
+            finalSize = sourcePoints
+        } else {
+            let factor = min(available.width  / sourcePoints.width,
+                            available.height / sourcePoints.height)
+            finalSize = CGSize(width:  sourcePoints.width  * factor,
+                               height: sourcePoints.height * factor)
+        }
+
+        window.setFrame(
+            NSRect(x: window.frame.origin.x, y: window.frame.origin.y,
+                   width: finalSize.width,    height: finalSize.height),
+            display: true, animate: false
+        )
+        window.center()
+        window.contentAspectRatio = finalSize
+        log.info("AppDelegate: viewer window sized to \(finalSize.width)×\(finalSize.height) (source \(sourceDimensions.width)×\(sourceDimensions.height) @\(scale)x, 1:1=\(fitsAt1x))")
+    }
+
+    // MARK: - End session
+
     func endSession() {
-        activeSession?.stop()
-        sessionWindow?.orderOut(nil)
-        sessionWindow = nil
-        activeSession = nil
-        cursorOverlayWindow?.hide()
-        cursorOverlayWindow = nil
+        guard activeSession != nil || sessionWindow != nil || hostBannerWindow != nil else { return }
+
+        // Capture and nil everything atomically before any teardown to prevent re-entry
+        // (e.g. from windowWillClose firing synchronously during sessionWindow?.close()).
+        let session     = activeSession
+        let window      = sessionWindow
+        let banner      = hostBannerWindow
+        let cancellable = rendererCancellable
+
+        activeSession       = nil
+        sessionWindow       = nil
+        hostBannerWindow    = nil
+        rendererCancellable = nil
+
+        cancellable?.cancel()
+
+        session?.stop()
+        window?.close()
+        banner?.close()
+
+        viewerCursorOverlay?.hide(); viewerCursorOverlay = nil
+        hostGhostOverlay?.hide();    hostGhostOverlay    = nil
+        viewerLocalOverlay?.hide();  viewerLocalOverlay  = nil
+
+        NSApp.setActivationPolicy(.accessory)
     }
 
     // MARK: - Auto-accept notification banner
 
-    /// Shows a transient system notification so the host is always aware a remote
-    /// session started silently via trusted-device auto-accept.
     private func showAutoAcceptNotification(for peer: PearPeer) {
         let content = UNMutableNotificationContent()
         content.title = "Remote session started"
@@ -222,7 +346,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let request = UNNotificationRequest(
             identifier: "autoaccept-\(peer.id)-\(Date().timeIntervalSince1970)",
             content: content,
-            trigger: nil  // deliver immediately
+            trigger: nil
         )
         UNUserNotificationCenter.current().add(request) { error in
             if let error { log.error("AppDelegate: notification error: \(error)") }
@@ -259,7 +383,6 @@ extension AppDelegate: ContactListViewDelegate {
         }
     }
 
-    /// Caller asks the peer to share their screen — caller watches (viewer), peer shares (host).
     func requestScreen(from peer: PearPeer) {
         guard activeSession == nil else { return }
 
@@ -267,36 +390,34 @@ extension AppDelegate: ContactListViewDelegate {
             let client = SignalingClient(peer: peer, peerStore: peerStore)
             client.onAccepted = { [weak self] descriptor in
                 log.info("AppDelegate: screen request accepted, launching viewer session")
-                // We requested their screen — we are the viewer
                 self?.launchSession(descriptor: descriptor, peer: peer, role: .viewer)
             }
             client.ringAsRequest()
         }
     }
 
-    /// Called after the user passes both TrustApprovalView stages.
-    /// Generates a token, stores it locally (so we can validate incoming rings),
-    /// and sends a TrustGrantMessage to the peer (so they can include it in future rings).
     func grantTrust(to peer: PearPeer) {
-        let token = TrustedDeviceStore.generateToken()
-
-        // Store on our side — we are the granter; we validate this token on incoming rings
+        guard let pubKey = peer.publicKey, !pubKey.isEmpty else {
+            showAlert(title: "Can't add trusted device", message: "This peer didn't advertise a public key. They may need to update PearShare.")
+            return
+        }
         let device = TrustedDevice(
             peerID: peer.id,
             displayName: peer.displayName,
-            token: token,
+            publicKey: pubKey,
             grantedAt: Date()
         )
         TrustedDeviceStore.shared.grant(device)
-        log.info("AppDelegate: granted trust to \(peer.displayName), sending TrustGrant")
+        log.info("AppDelegate: granted auto-answer to \(peer.displayName) (\(peer.id))")
+    }
+}
 
-        // Send the token to the peer so they can include it in future rings
-        let myName = Host.current().localizedName ?? "PearShare"
-        // Our own Tailscale IP is needed as the key on the peer side.
-        // PeerDiscovery stores it in peerStore.selfIP; fall back to an empty string if unavailable.
-        let myIP = peerStore.selfIP ?? ""
-        let client = SignalingClient(peer: peer, peerStore: peerStore)
-        client.sendTrustGrant(token: token, myDisplayName: myName, myPeerID: myIP)
+// MARK: - NSWindowDelegate (viewer window close → hang up)
+
+extension AppDelegate: NSWindowDelegate {
+    func windowWillClose(_ notification: Notification) {
+        guard (notification.object as? NSWindow) === sessionWindow else { return }
+        endSession()
     }
 }
 
@@ -309,11 +430,10 @@ extension AppDelegate: SignalingServerDelegate {
         }
     }
 
-    /// Trusted-device ring: silently start sharing screen, show notification banner only.
-    func signalingServer(_ server: SignalingServer, autoAcceptedRingFrom peer: PearPeer, descriptor: SessionDescriptor) {
-        log.info("AppDelegate: auto-accepted ring from trusted device \(peer.tailscaleIP)")
+    func signalingServer(_ server: SignalingServer, autoAcceptedRingFrom peer: PearPeer, descriptor: SessionDescriptor, intent: String) {
+        log.info("AppDelegate: auto-accepted ring from trusted device \(peer.tailscaleIP) intent=\(intent)")
         showAutoAcceptNotification(for: peer)
-        // Auto-accept: this machine becomes the viewer (watches the caller's screen, which is what they want)
-        launchSession(descriptor: descriptor, peer: peer, role: .viewer)
+        let role: SessionRole = intent == "request" ? .host : .viewer
+        launchSession(descriptor: descriptor, peer: peer, role: role)
     }
 }

@@ -2,17 +2,22 @@ import Foundation
 
 // MARK: - ControlEvent
 //
-// Wire format for remote-control events sent from viewer → host over UDP (port 5537).
-// All pointer coordinates are normalized to [0, 1] relative to the host display,
-// so coordinate mapping is resolution-independent.
+// Wire format for control events sent between viewer and host over UDP (port 5537).
+// All pointer coordinates are normalized to [0, 1] relative to the host display.
+//
+// Direction:
+//   viewer → host : mouseMoved, mouseButton, scroll, keyEvent
+//   host → viewer : controlTransfer
 
 enum ControlEvent: Codable {
     case mouseMoved(x: Double, y: Double)
     case mouseButton(x: Double, y: Double, button: MouseButton, down: Bool)
     case scroll(x: Double, y: Double, dx: Double, dy: Double)
     case keyEvent(keyCode: UInt16, modifiers: UInt64, down: Bool)
+    /// Sent host → viewer to notify who currently has control of the system cursor.
+    case controlTransfer(controller: Controller)
 
-    // MARK: - Mouse button
+    // MARK: - Nested types
 
     enum MouseButton: Int, Codable {
         case left   = 0
@@ -20,14 +25,20 @@ enum ControlEvent: Codable {
         case other  = 2
     }
 
-    // MARK: - Codable (manual, for tagged union)
+    /// Which participant currently drives the real system cursor.
+    enum Controller: String, Codable {
+        case host
+        case viewer
+    }
+
+    // MARK: - Codable (manual tagged union)
 
     private enum CodingKeys: String, CodingKey {
-        case type, x, y, button, down, dx, dy, keyCode, modifiers
+        case type, x, y, button, down, dx, dy, keyCode, modifiers, controller
     }
 
     private enum EventType: String, Codable {
-        case mouseMoved, mouseButton, scroll, keyEvent
+        case mouseMoved, mouseButton, scroll, keyEvent, controlTransfer
     }
 
     init(from decoder: Decoder) throws {
@@ -59,6 +70,10 @@ enum ControlEvent: Codable {
                 modifiers: try c.decode(UInt64.self, forKey: .modifiers),
                 down: try c.decode(Bool.self, forKey: .down)
             )
+        case .controlTransfer:
+            self = .controlTransfer(
+                controller: try c.decode(Controller.self, forKey: .controller)
+            )
         }
     }
 
@@ -86,17 +101,14 @@ enum ControlEvent: Codable {
             try c.encode(keyCode, forKey: .keyCode)
             try c.encode(modifiers, forKey: .modifiers)
             try c.encode(down, forKey: .down)
+        case .controlTransfer(let controller):
+            try c.encode(EventType.controlTransfer, forKey: .type)
+            try c.encode(controller, forKey: .controller)
         }
     }
 
     // MARK: - Serialization helpers
 
-    /// Encode to a compact JSON Data (no newline). Fits easily in one UDP packet.
-    func toData() -> Data? {
-        try? JSONEncoder().encode(self)
-    }
-
-    static func from(data: Data) -> ControlEvent? {
-        try? JSONDecoder().decode(ControlEvent.self, from: data)
-    }
+    func toData() -> Data? { try? JSONEncoder().encode(self) }
+    static func from(data: Data) -> ControlEvent? { try? JSONDecoder().decode(ControlEvent.self, from: data) }
 }
