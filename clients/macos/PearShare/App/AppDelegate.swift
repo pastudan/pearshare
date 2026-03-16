@@ -227,6 +227,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         self?.activeSession?.setShowsCursor(true)
                     }
                 }
+                ctrl.onHangup = { [weak self] in self?.endSession() }
             } catch {
                 log.error("AppDelegate: host session.start() threw: \(error)")
                 endSession()
@@ -344,6 +345,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     vho?.hide()
                     self?.showViewerCursor()
                 }
+                ctrl.onHangup = { [weak self] in self?.endSession() }
             } catch {
                 log.error("AppDelegate: viewer session.start() threw: \(error)")
                 endSession()
@@ -465,10 +467,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewerEventMonitors.forEach { NSEvent.removeMonitor($0) }
         viewerEventMonitors = []
 
+        // Notify the peer before tearing down the control channel.
+        session?.controlChannel?.sendHangup()
         session?.stop()
-        window?.close()
-        pill?.close()
-        banner?.close()
+
+        // Use orderOut rather than close so AppKit doesn't snapshot the Metal view
+        // (now invalidated) for a window-close animation — which would crash in
+        // _NSWindowTransformAnimation dealloc when it tries to release freed textures.
+        window?.orderOut(nil)
+        pill?.orderOut(nil)
+        banner?.orderOut(nil)
 
         viewerCursorOverlay?.hide(); viewerCursorOverlay = nil
         hostGhostOverlay?.hide();    hostGhostOverlay    = nil

@@ -12,7 +12,9 @@ import Foundation
 enum ControlEvent: Codable {
     case mouseMoved(x: Double, y: Double)
     case mouseButton(x: Double, y: Double, button: MouseButton, down: Bool)
-    case scroll(x: Double, y: Double, dx: Double, dy: Double)
+    /// `precise` is true for trackpad/Magic Mouse (continuous pixel deltas),
+    /// false for a traditional mouse wheel (discrete line-count deltas).
+    case scroll(x: Double, y: Double, dx: Double, dy: Double, precise: Bool)
     case keyEvent(keyCode: UInt16, modifiers: UInt64, down: Bool)
     /// Sent host → viewer to notify who currently has control of the system cursor.
     case controlTransfer(controller: Controller)
@@ -40,7 +42,7 @@ enum ControlEvent: Codable {
     // MARK: - Codable (manual tagged union)
 
     private enum CodingKeys: String, CodingKey {
-        case type, x, y, button, down, dx, dy, keyCode, modifiers, controller
+        case type, x, y, button, down, dx, dy, precise, keyCode, modifiers, controller
     }
 
     private enum EventType: String, Codable {
@@ -69,7 +71,8 @@ enum ControlEvent: Codable {
                 x: try c.decode(Double.self, forKey: .x),
                 y: try c.decode(Double.self, forKey: .y),
                 dx: try c.decode(Double.self, forKey: .dx),
-                dy: try c.decode(Double.self, forKey: .dy)
+                dy: try c.decode(Double.self, forKey: .dy),
+                precise: (try? c.decode(Bool.self, forKey: .precise)) ?? false
             )
         case .keyEvent:
             self = .keyEvent(
@@ -106,12 +109,13 @@ enum ControlEvent: Codable {
             try c.encode(y, forKey: .y)
             try c.encode(button, forKey: .button)
             try c.encode(down, forKey: .down)
-        case .scroll(let x, let y, let dx, let dy):
+        case .scroll(let x, let y, let dx, let dy, let precise):
             try c.encode(EventType.scroll, forKey: .type)
             try c.encode(x, forKey: .x)
             try c.encode(y, forKey: .y)
             try c.encode(dx, forKey: .dx)
             try c.encode(dy, forKey: .dy)
+            try c.encode(precise, forKey: .precise)
         case .keyEvent(let keyCode, let modifiers, let down):
             try c.encode(EventType.keyEvent, forKey: .type)
             try c.encode(keyCode, forKey: .keyCode)

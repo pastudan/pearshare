@@ -106,9 +106,14 @@ final class ControlChannel {
         }
     }
 
-    /// Send a hangup event to the peer, then clean up. Must be called before stop().
+    /// Send a hangup event to the peer. Must be called before stop().
     func sendHangup() {
-        send(.hangup)
+        // Viewer uses sendConnection; host uses peerConnection (send() only covers the viewer path).
+        guard let data = ControlEvent.hangup.toData() else { return }
+        switch role {
+        case .viewer: sendConnection?.send(content: data, completion: .idempotent)
+        case .host:   peerConnection?.send(content: data, completion: .idempotent)
+        }
     }
 
     func stop() {
@@ -143,9 +148,14 @@ final class ControlChannel {
         conn.start(queue: .global(qos: .userInteractive))
         self.sendConnection = conn
 
-        // Listen on the same connection for controlTransfer packets sent by the host.
+        // Listen on the same connection for controlTransfer / hangup packets sent by the host.
         receiveFromHost(on: conn)
         installEventMonitors()
+
+        // Keep the host's inactivity watchdog alive with periodic heartbeats.
+        heartbeatTimer = Timer.scheduledTimer(
+            withTimeInterval: Self.heartbeatInterval, repeats: true
+        ) { [weak self] _ in self?.send(.heartbeat) }
     }
 
     /// Receive loop for host→viewer messages on the viewer's outbound connection.
@@ -168,6 +178,9 @@ final class ControlChannel {
             onControlTransfer?(controller)
         case .hostCursorMoved(let nx, let ny):
             onRemoteHostCursorMoved?(denormalise(nx: nx, ny: ny))
+        case .hangup:
+            logger.info("ControlChannel viewer: host sent hangup")
+            onHangup?()
         default:
             break
         }
@@ -293,7 +306,12 @@ final class ControlChannel {
 
     private func sendScrollEvent(_ event: NSEvent) {
         let (x, y) = normalise(screenPoint: NSEvent.mouseLocation)
-        send(.scroll(x: x, y: y, dx: Double(event.scrollingDeltaX), dy: Double(event.scrollingDeltaY)))
+        send(.scroll(
+            x: x, y: y,
+            dx: Double(event.scrollingDeltaX),
+            dy: Double(event.scrollingDeltaY),
+            precise: event.hasPreciseScrollingDeltas
+        ))
     }
 
     private func sendKey(_ event: NSEvent, down: Bool) {
@@ -337,6 +355,7 @@ final class ControlChannel {
 
         hostPosition = NSEvent.mouseLocation
         installHostMouseMonitors()
+        startViewerWatchdog()
 
         suppressionTap.onGhostMoved = { [weak self] pos in
             self?.hostPosition = pos
@@ -370,6 +389,21 @@ final class ControlChannel {
             // Never treat them as a host reclaim — that would bounce control back immediately.
             if event.cgEvent?.getIntegerValueField(.eventSourceUserData) == MouseSuppressionTap.eventTag { return }
             Task { @MainActor in self?.hostDidClick() }
+        }
+    }
+
+    // MARK: - Host viewer watchdog
+
+    /// Starts (or restarts) a timer that fires `onHangup` if the viewer goes silent.
+    @MainActor
+    private func startViewerWatchdog() {
+        viewerWatchdogTimer?.invalidate()
+        viewerWatchdogTimer = Timer.scheduledTimer(
+            withTimeInterval: Self.viewerInactivityTimeout, repeats: false
+        ) { [weak self] _ in
+            guard let self else { return }
+            logger.info("ControlChannel host: viewer watchdog fired — no heartbeat for \(Self.viewerInactivityTimeout)s")
+            self.onHangup?()
         }
     }
 
@@ -427,9 +461,9 @@ final class ControlChannel {
                 injectMouseButton(at: cgPt, button: button, down: down)
             }
 
-        case .scroll(let nx, let ny, let dx, let dy):
+        case .scroll(let nx, let ny, let dx, let dy, let precise):
             if currentController == .viewer {
-                injectScroll(at: displayPoint(nx: nx, ny: ny), dx: dx, dy: dy)
+                injectScroll(at: displayPoint(nx: nx, ny: ny), dx: dx, dy: dy, precise: precise)
             }
 
         case .keyEvent(let keyCode, let modifiers, let down):
@@ -441,10 +475,13 @@ final class ControlChannel {
             break  // host only sends these; viewer should never send them
 
         case .hangup:
-            break  // handled upstream in receiveFromViewer before this switch
+            logger.info("ControlChannel host: viewer sent hangup")
+            viewerWatchdogTimer?.invalidate()
+            viewerWatchdogTimer = nil
+            onHangup?()
 
         case .heartbeat:
-            break  // handled upstream (watchdog timer reset)
+            startViewerWatchdog()
         }
     }
 
@@ -559,12 +596,37 @@ final class ControlChannel {
         postInjected(e)
     }
 
-    private func injectScroll(at pt: CGPoint, dx: Double, dy: Double) {
-        let lines = Int32(dy / 10)
-        guard let e = CGEvent(scrollWheelEvent2Source: Self.injectionSource, units: .line,
-                              wheelCount: 1, wheel1: lines, wheel2: 0, wheel3: 0) else { return }
-        e.location = pt
-        postInjected(e)
+    private func injectScroll(at pt: CGPoint, dx: Double, dy: Double, precise: Bool) {
+        if precise {
+            // Trackpad / Magic Mouse: continuous pixel-precise scroll.
+            // Use .pixel units and mark the event as continuous so macOS applies
+            // momentum, rubber-banding, and smooth scroll animations.
+            // The 16.16 fixed-point field carries sub-pixel precision that Int32 wheel1 loses.
+            guard let e = CGEvent(scrollWheelEvent2Source: Self.injectionSource, units: .pixel,
+                                  wheelCount: 2,
+                                  wheel1: Int32(dy.rounded()),
+                                  wheel2: Int32(dx.rounded()),
+                                  wheel3: 0) else { return }
+            e.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+            // Fixed-point (16.16) fields carry fractional precision.
+            e.setIntegerValueField(.scrollWheelEventFixedPtDeltaAxis1, value: Int64(dy * 65536))
+            e.setIntegerValueField(.scrollWheelEventFixedPtDeltaAxis2, value: Int64(dx * 65536))
+            e.setIntegerValueField(.scrollWheelEventPointDeltaAxis1,   value: Int64(dy.rounded()))
+            e.setIntegerValueField(.scrollWheelEventPointDeltaAxis2,   value: Int64(dx.rounded()))
+            e.location = pt
+            postInjected(e)
+        } else {
+            // Traditional mouse wheel: discrete line-count scroll.
+            // NSEvent.scrollingDeltaY is already in lines when hasPreciseScrollingDeltas == false
+            // (e.g. LinearMouse may send 3 lines per notch). Pass it straight through.
+            guard let e = CGEvent(scrollWheelEvent2Source: Self.injectionSource, units: .line,
+                                  wheelCount: 2,
+                                  wheel1: Int32(dy.rounded()),
+                                  wheel2: Int32(dx.rounded()),
+                                  wheel3: 0) else { return }
+            e.location = pt
+            postInjected(e)
+        }
     }
 
     private func injectKey(keyCode: UInt16, modifiers: UInt64, down: Bool) {
