@@ -37,6 +37,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Viewer-side control state
     private var viewerIsInControl = false
     private var isViewerCursorHidden = false
+    // NSEvent monitors used on the viewer side (stored as Any; cleaned up in endSession)
+    private var viewerEventMonitors: [Any] = []
 
     let peerStore = PeerStore()
     private var discovery: PeerDiscovery?
@@ -281,11 +283,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let resizeObs = NotificationCenter.default.addObserver(
             forName: NSWindow.didResizeNotification, object: window, queue: .main
         ) { [weak self] _ in Task { @MainActor in self?.repositionControlPill() } }
-        // Pill is the drag handle: when the user drags the pill, move the session window to follow.
-        let pillMoveObs = NotificationCenter.default.addObserver(
-            forName: NSWindow.didMoveNotification, object: pill, queue: .main
-        ) { [weak self] _ in Task { @MainActor in self?.sessionWindowFollowsPill() } }
-        pillObservers = [moveObs, resizeObs, pillMoveObs]
+        pillObservers = [moveObs, resizeObs]
+
+        // Real-time pill drag: NSWindow.didMoveNotification is only posted AFTER a drag ends
+        // when isMovableByWindowBackground is used, so we track it manually with local event
+        // monitors instead. These fire continuously during the drag.
+        installPillDragMonitors(pill: pill)
 
         // Observe source dimensions: size window to 1:1 or scale-to-fit on first frame.
         rendererCancellable = renderer.$sourceDimensions
@@ -395,15 +398,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pill.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
-    /// Inverse of repositionControlPill: when the pill is dragged, move the session window
-    /// so it remains anchored below the pill's centre.
+    /// Inverse of repositionControlPill: move the session window to stay anchored below the pill.
     private func sessionWindowFollowsPill() {
         guard let window = sessionWindow, let pill = viewerControlPill else { return }
-        let pillCentreX = pill.frame.midX
-        let pillCentreY = pill.frame.midY   // pill straddles window top → window.maxY == pill.midY
-        let x = pillCentreX - window.frame.width / 2
-        let y = pillCentreY - window.frame.height
+        // pill straddles window top edge → window.maxY == pill.midY
+        let x = pill.frame.midX - window.frame.width / 2
+        let y = pill.frame.midY - window.frame.height
         window.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
+    /// Install local NSEvent monitors that move the pill (and session window) in real-time
+    /// while the user drags the pill. Local monitors fire continuously during the drag,
+    /// unlike NSWindow.didMoveNotification which only fires after the drag completes.
+    private func installPillDragMonitors(pill: NSWindow) {
+        var dragActive = false
+        var anchorMouse = NSPoint.zero
+        var anchorPillOrigin = NSPoint.zero
+
+        let downM = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak pill] event in
+            if let pill, pill.frame.contains(NSEvent.mouseLocation) {
+                dragActive = true
+                anchorMouse = NSEvent.mouseLocation
+                anchorPillOrigin = pill.frame.origin
+            }
+            return event
+        }
+        let dragM = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDragged) { [weak self, weak pill] event in
+            guard dragActive, let self, let pill else { return event }
+            let cur = NSEvent.mouseLocation
+            pill.setFrameOrigin(NSPoint(
+                x: anchorPillOrigin.x + cur.x - anchorMouse.x,
+                y: anchorPillOrigin.y + cur.y - anchorMouse.y
+            ))
+            self.sessionWindowFollowsPill()
+            return event
+        }
+        let upM = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { event in
+            dragActive = false; return event
+        }
+        viewerEventMonitors += [downM, dragM, upM].compactMap { $0 }
     }
 
     // MARK: - End session
@@ -429,6 +462,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         cancellable?.cancel()
         observers.forEach { NotificationCenter.default.removeObserver($0) }
+        viewerEventMonitors.forEach { NSEvent.removeMonitor($0) }
+        viewerEventMonitors = []
 
         session?.stop()
         window?.close()

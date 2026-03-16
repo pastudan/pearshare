@@ -30,9 +30,10 @@ final class ViewerControlPillPanel: NSPanel {
         backgroundColor = .clear
         hasShadow = true
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        // The pill is the only drag handle for the session window (the window itself
-        // has isMovableByWindowBackground = false so drags go to the host).
-        isMovableByWindowBackground = true
+        // isMovableByWindowBackground is intentionally NOT set: AppKit's built-in drag
+        // tracking loop only posts NSWindow.didMoveNotification after the drag ends, so
+        // the session window wouldn't follow in real-time. Dragging is handled manually
+        // with local NSEvent monitors in AppDelegate instead.
     }
 }
 
