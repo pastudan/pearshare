@@ -148,7 +148,7 @@ final class ScreenCaptureManager: NSObject {
 
         config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         config.capturesAudio = false
-        config.showsCursor = true
+        config.showsCursor = false
 
         let output = StreamOutput()
         output.delegate = self

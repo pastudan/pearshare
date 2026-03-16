@@ -105,7 +105,7 @@ private final class CursorArrowView: NSView {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
 
         // In AppKit coords (origin bottom-left of view):
-        let tip = CGPoint(x: Self.tipX, y: bounds.height - Self.tipY - 20)
+        let tip = CGPoint(x: Self.tipX, y: bounds.height - Self.tipY)
 
         drawArrow(at: tip, color: arrowColor, in: ctx)
 

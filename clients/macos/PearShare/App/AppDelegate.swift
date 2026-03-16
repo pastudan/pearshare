@@ -16,13 +16,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Host session: small draggable banner (no full window)
     private var hostBannerWindow: NSWindow?
 
-    // Viewer session: borderless content window
+    // Viewer session: borderless content window + floating control pill
     private var sessionWindow: NSWindow?
+    private var viewerControlPill: ViewerControlPillPanel?
+    private var pillObservers: [NSObjectProtocol] = []
     private var rendererCancellable: AnyCancellable?
 
     private var activeSession: MediaSession?
-    private var viewerControlPill: NSWindow?
-    private var pillObservers: [Any] = []
 
     // Multiplayer cursor overlays:
     //   viewerCursorOverlay  — pastel blue, shown on HOST screen when host has control
@@ -31,6 +31,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var viewerCursorOverlay: RemoteCursorOverlayWindow?
     private var hostGhostOverlay: RemoteCursorOverlayWindow?
     private var viewerLocalOverlay: RemoteCursorOverlayWindow?
+
+    // Viewer-side control state
+    private var viewerIsInControl = false
+    private var isViewerCursorHidden = false
 
     let peerStore = PeerStore()
     private var discovery: PeerDiscovery?
@@ -57,6 +61,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if AXIsProcessTrusted() { return true }
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
         return AXIsProcessTrustedWithOptions(opts)
+    }
+
+    // MARK: - Viewer cursor visibility helpers
+
+    /// Hide the viewer's system cursor (used when host has control).
+    /// Balanced with showViewerCursor(); safe to call redundantly.
+    private func hideViewerCursor() {
+        guard !isViewerCursorHidden else { return }
+        isViewerCursorHidden = true
+        NSCursor.hide()
+    }
+
+    /// Restore the viewer's system cursor. Safe to call redundantly.
+    private func showViewerCursor() {
+        guard isViewerCursorHidden else { return }
+        isViewerCursorHidden = false
+        NSCursor.unhide()
     }
 
     // MARK: - Notification permission (for auto-accept banners)
@@ -219,7 +240,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             defer: false
         )
         window.isOpaque = false
-        window.backgroundColor = .black
+        window.backgroundColor = .clear
         window.hasShadow = true
         window.isMovableByWindowBackground = true
         window.delegate = self
@@ -228,6 +249,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hostingView = NSHostingView(rootView: SessionView(renderer: renderer))
         hostingView.wantsLayer = true
         window.contentView = hostingView
+        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
         hostingView.layer?.cornerRadius = 12
         hostingView.layer?.masksToBounds = true
 
@@ -235,6 +257,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         NSApp.setActivationPolicy(.regular)
         self.sessionWindow = window
+
+        // Floating control pill — straddling the top edge of the session window.
+        let pill = ViewerControlPillPanel.make { [weak self] in self?.endSession() }
+        pill.orderFrontRegardless()
+        self.viewerControlPill = pill
+        repositionControlPill()
+
+        let moveObs = NotificationCenter.default.addObserver(
+            forName: NSWindow.didMoveNotification, object: window, queue: .main
+        ) { [weak self] _ in Task { @MainActor in self?.repositionControlPill() } }
+        let resizeObs = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResizeNotification, object: window, queue: .main
+        ) { [weak self] _ in Task { @MainActor in self?.repositionControlPill() } }
+        pillObservers = [moveObs, resizeObs]
 
         // Observe source dimensions: size window to 1:1 or scale-to-fit on first frame.
         rendererCancellable = renderer.$sourceDimensions
@@ -256,12 +292,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         window?.contentView?.bounds ?? .zero
                     )
                 }
-                ctrl.onLocalCursorMoved = { [weak vlo] screenPt in
-                    vlo?.moveTo(screenPoint: screenPt)
-                    vlo?.show()
+
+                // C — blue "Me" overlay: visible only when host has control.
+                // System cursor: hidden when host has control, shown when viewer has control.
+                ctrl.onControlTransfer = { [weak self, weak vlo] controller in
+                    guard let self else { return }
+                    let inControl = (controller == .viewer)
+                    self.viewerIsInControl = inControl
+                    if inControl {
+                        // Viewer took control: show their real system cursor, hide overlay C.
+                        vlo?.hide()
+                        self.showViewerCursor()
+                    } else {
+                        // Host took control: hide system cursor, show overlay C at current position.
+                        self.hideViewerCursor()
+                        vlo?.moveTo(screenPoint: NSEvent.mouseLocation)
+                        vlo?.show()
+                    }
                 }
-                ctrl.onControlTransfer = { [weak vlo] controller in
-                    if controller == .viewer { vlo?.hide() } else { vlo?.show() }
+                ctrl.onLocalCursorMoved = { [weak self, weak vlo] screenPt in
+                    vlo?.moveTo(screenPoint: screenPt)
+                    // Only show C when host has control (viewer has control → system cursor A is shown).
+                    if self?.viewerIsInControl == false { vlo?.show() }
+                }
+                ctrl.onMouseExitedWindow = { [weak self, weak vlo] in
+                    vlo?.hide()
+                    self?.showViewerCursor()
                 }
             } catch {
                 log.error("AppDelegate: viewer session.start() threw: \(error)")
@@ -302,7 +358,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         window.center()
         window.contentAspectRatio = finalSize
+        repositionControlPill()
         log.info("AppDelegate: viewer window sized to \(finalSize.width)×\(finalSize.height) (source \(sourceDimensions.width)×\(sourceDimensions.height) @\(scale)x, 1:1=\(fitsAt1x))")
+    }
+
+    // MARK: - Control pill positioning
+
+    private func repositionControlPill() {
+        guard let window = sessionWindow, let pill = viewerControlPill else { return }
+        // Center horizontally; straddle the top edge (20 pt above, 20 pt below).
+        let x = window.frame.midX - pill.frame.width / 2
+        let y = window.frame.maxY - pill.frame.height / 2
+        pill.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
     // MARK: - End session
@@ -315,22 +382,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let session     = activeSession
         let window      = sessionWindow
         let banner      = hostBannerWindow
+        let pill        = viewerControlPill
+        let observers   = pillObservers
         let cancellable = rendererCancellable
 
         activeSession       = nil
         sessionWindow       = nil
         hostBannerWindow    = nil
+        viewerControlPill   = nil
+        pillObservers       = []
         rendererCancellable = nil
 
         cancellable?.cancel()
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
 
         session?.stop()
         window?.close()
+        pill?.close()
         banner?.close()
 
         viewerCursorOverlay?.hide(); viewerCursorOverlay = nil
         hostGhostOverlay?.hide();    hostGhostOverlay    = nil
         viewerLocalOverlay?.hide();  viewerLocalOverlay  = nil
+
+        showViewerCursor()
+        viewerIsInControl = false
 
         NSApp.setActivationPolicy(.accessory)
     }
@@ -418,6 +494,26 @@ extension AppDelegate: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         guard (notification.object as? NSWindow) === sessionWindow else { return }
         endSession()
+    }
+
+    /// Viewer left the session window (alt-tab, etc.) — hide overlay and restore cursor
+    /// so PearShare's hidden cursor state doesn't bleed into other apps.
+    func windowDidResignKey(_ notification: Notification) {
+        guard (notification.object as? NSWindow) === sessionWindow else { return }
+        viewerLocalOverlay?.hide()
+        showViewerCursor()
+    }
+
+    /// Viewer came back to the session window — re-apply cursor state based on who's in control.
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard (notification.object as? NSWindow) === sessionWindow else { return }
+        if !viewerIsInControl {
+            hideViewerCursor()
+            if let pt = viewerLocalOverlay.map({ _ in NSEvent.mouseLocation }) {
+                viewerLocalOverlay?.moveTo(screenPoint: pt)
+                viewerLocalOverlay?.show()
+            }
+        }
     }
 }
 

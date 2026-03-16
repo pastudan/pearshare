@@ -43,6 +43,8 @@ final class ControlChannel {
     var onControlTransfer: ((ControlEvent.Controller) -> Void)?
     /// Viewer: local cursor moved — AppDelegate repositions viewer's local blue overlay.
     var onLocalCursorMoved: ((NSPoint) -> Void)?
+    /// Viewer: cursor just left the session window boundary.
+    var onMouseExitedWindow: (() -> Void)?
 
     // MARK: - Private state
 
@@ -153,8 +155,18 @@ final class ControlChannel {
         }
 
         var lastMoveSent: TimeInterval = 0
+        var wasInsideWindow = false
         addLocal(.mouseMoved) { [weak self] _ in
-            guard let self, self.isMouseInsideWindow() else { return }
+            guard let self else { return }
+            let inside = self.isMouseInsideWindow()
+            if !inside {
+                if wasInsideWindow {
+                    wasInsideWindow = false
+                    self.onMouseExitedWindow?()
+                }
+                return
+            }
+            wasInsideWindow = true
             let now = Date().timeIntervalSinceReferenceDate
             guard now - lastMoveSent > 0.016 else { return }
             lastMoveSent = now
@@ -227,7 +239,14 @@ final class ControlChannel {
         listener.newConnectionHandler = { [weak self] conn in
             conn.start(queue: .global(qos: .userInteractive))
             guard let self else { return }
-            Task { @MainActor in self.peerConnection = conn }
+            Task { @MainActor in
+                self.peerConnection = conn
+                // Tell the viewer the current controller immediately so their
+                // overlay and cursor state is correct from the first frame.
+                if let data = ControlEvent.controlTransfer(controller: self.currentController).toData() {
+                    conn.send(content: data, completion: .idempotent)
+                }
+            }
             self.receiveFromViewer(on: conn)
         }
         listener.start(queue: .global(qos: .userInteractive))
