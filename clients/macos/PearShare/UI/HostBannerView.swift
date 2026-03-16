@@ -108,7 +108,6 @@ struct HostBannerView: View {
         .background(
             Capsule()
                 .fill(Color.pearGreen.opacity(0.95))
-                .shadow(color: .black.opacity(0.3), radius: 12, y: 4)
         )
         .onAppear { startTimer() }
         .onDisappear { timer?.invalidate() }

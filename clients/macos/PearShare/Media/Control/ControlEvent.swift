@@ -7,7 +7,7 @@ import Foundation
 //
 // Direction:
 //   viewer → host : mouseMoved, mouseButton, scroll, keyEvent
-//   host → viewer : controlTransfer
+//   host → viewer : controlTransfer, hostCursorMoved
 
 enum ControlEvent: Codable {
     case mouseMoved(x: Double, y: Double)
@@ -16,6 +16,8 @@ enum ControlEvent: Codable {
     case keyEvent(keyCode: UInt16, modifiers: UInt64, down: Bool)
     /// Sent host → viewer to notify who currently has control of the system cursor.
     case controlTransfer(controller: Controller)
+    /// Sent host → viewer while viewer has control: host's ghost cursor position [0,1].
+    case hostCursorMoved(x: Double, y: Double)
 
     // MARK: - Nested types
 
@@ -38,7 +40,7 @@ enum ControlEvent: Codable {
     }
 
     private enum EventType: String, Codable {
-        case mouseMoved, mouseButton, scroll, keyEvent, controlTransfer
+        case mouseMoved, mouseButton, scroll, keyEvent, controlTransfer, hostCursorMoved
     }
 
     init(from decoder: Decoder) throws {
@@ -74,6 +76,11 @@ enum ControlEvent: Codable {
             self = .controlTransfer(
                 controller: try c.decode(Controller.self, forKey: .controller)
             )
+        case .hostCursorMoved:
+            self = .hostCursorMoved(
+                x: try c.decode(Double.self, forKey: .x),
+                y: try c.decode(Double.self, forKey: .y)
+            )
         }
     }
 
@@ -104,6 +111,10 @@ enum ControlEvent: Codable {
         case .controlTransfer(let controller):
             try c.encode(EventType.controlTransfer, forKey: .type)
             try c.encode(controller, forKey: .controller)
+        case .hostCursorMoved(let x, let y):
+            try c.encode(EventType.hostCursorMoved, forKey: .type)
+            try c.encode(x, forKey: .x)
+            try c.encode(y, forKey: .y)
         }
     }
 

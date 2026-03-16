@@ -28,9 +28,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     //   viewerCursorOverlay  — pastel blue, shown on HOST screen when host has control
     //   hostGhostOverlay     — pastel red,  shown on HOST screen when viewer has control
     //   viewerLocalOverlay   — pastel blue, shown on VIEWER screen when viewer is NOT in control
+    //   viewerHostOverlay    — pastel red,  shown on VIEWER screen when viewer has control
     private var viewerCursorOverlay: RemoteCursorOverlayWindow?
     private var hostGhostOverlay: RemoteCursorOverlayWindow?
     private var viewerLocalOverlay: RemoteCursorOverlayWindow?
+    private var viewerHostOverlay: RemoteCursorOverlayWindow?
 
     // Viewer-side control state
     private var viewerIsInControl = false
@@ -209,11 +211,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
                 ctrl.onRemoteCursorMoved = { [weak vco] screenPt in vco?.moveTo(screenPoint: screenPt) }
                 ctrl.onHostCursorMoved   = { [weak hgo] screenPt in hgo?.moveTo(screenPoint: screenPt) }
-                ctrl.onControlTransfer   = { [weak vco, weak hgo] controller in
+                ctrl.onControlTransfer   = { [weak self, weak vco, weak hgo] controller in
                     if controller == .viewer {
+                        // Viewer has control: hide system cursor from stream, show host ghost D
                         vco?.hide(); hgo?.show()
+                        self?.activeSession?.setShowsCursor(false)
                     } else {
+                        // Host has control: show system cursor in stream, show viewer cursor overlay
                         vco?.show(); hgo?.hide()
+                        self?.activeSession?.setShowsCursor(true)
                     }
                 }
             } catch {
@@ -229,6 +235,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func launchViewerSession(session: MediaSession, peer: PearPeer, descriptor: SessionDescriptor) {
         let vlo = RemoteCursorOverlayWindow.pastelBlue(peerName: "Me")
         self.viewerLocalOverlay = vlo
+        let vho = RemoteCursorOverlayWindow.pastelRed(peerName: peer.displayName)
+        self.viewerHostOverlay = vho
 
         guard let renderer = session.renderer else { return }
 
@@ -294,17 +302,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
 
                 // C — blue "Me" overlay: visible only when host has control.
+                // D (on viewer) — red host overlay: visible only when viewer has control.
                 // System cursor: hidden when host has control, shown when viewer has control.
-                ctrl.onControlTransfer = { [weak self, weak vlo] controller in
+                ctrl.onControlTransfer = { [weak self, weak vlo, weak vho] controller in
                     guard let self else { return }
                     let inControl = (controller == .viewer)
                     self.viewerIsInControl = inControl
                     if inControl {
-                        // Viewer took control: show their real system cursor, hide overlay C.
+                        // Viewer took control: show system cursor A + red host ghost D; hide C.
                         vlo?.hide()
                         self.showViewerCursor()
+                        vho?.show()
                     } else {
-                        // Host took control: hide system cursor, show overlay C at current position.
+                        // Host took control: hide system cursor; show C; hide D.
+                        vho?.hide()
                         self.hideViewerCursor()
                         vlo?.moveTo(screenPoint: NSEvent.mouseLocation)
                         vlo?.show()
@@ -315,8 +326,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     // Only show C when host has control (viewer has control → system cursor A is shown).
                     if self?.viewerIsInControl == false { vlo?.show() }
                 }
-                ctrl.onMouseExitedWindow = { [weak self, weak vlo] in
+                ctrl.onRemoteHostCursorMoved = { [weak vho] screenPt in
+                    vho?.moveTo(screenPoint: screenPt)
+                }
+                ctrl.onMouseExitedWindow = { [weak self, weak vlo, weak vho] in
                     vlo?.hide()
+                    vho?.hide()
                     self?.showViewerCursor()
                 }
             } catch {
@@ -404,6 +419,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewerCursorOverlay?.hide(); viewerCursorOverlay = nil
         hostGhostOverlay?.hide();    hostGhostOverlay    = nil
         viewerLocalOverlay?.hide();  viewerLocalOverlay  = nil
+        viewerHostOverlay?.hide();   viewerHostOverlay   = nil
 
         showViewerCursor()
         viewerIsInControl = false
@@ -501,18 +517,21 @@ extension AppDelegate: NSWindowDelegate {
     func windowDidResignKey(_ notification: Notification) {
         guard (notification.object as? NSWindow) === sessionWindow else { return }
         viewerLocalOverlay?.hide()
+        viewerHostOverlay?.hide()
         showViewerCursor()
     }
 
     /// Viewer came back to the session window — re-apply cursor state based on who's in control.
     func windowDidBecomeKey(_ notification: Notification) {
         guard (notification.object as? NSWindow) === sessionWindow else { return }
-        if !viewerIsInControl {
+        if viewerIsInControl {
+            // Viewer has control: restore system cursor + red host ghost
+            viewerHostOverlay?.show()
+        } else {
+            // Host has control: hide system cursor, show blue local overlay
             hideViewerCursor()
-            if let pt = viewerLocalOverlay.map({ _ in NSEvent.mouseLocation }) {
-                viewerLocalOverlay?.moveTo(screenPoint: pt)
-                viewerLocalOverlay?.show()
-            }
+            viewerLocalOverlay?.moveTo(screenPoint: NSEvent.mouseLocation)
+            viewerLocalOverlay?.show()
         }
     }
 }

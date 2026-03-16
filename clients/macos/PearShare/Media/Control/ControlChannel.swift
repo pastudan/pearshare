@@ -45,6 +45,8 @@ final class ControlChannel {
     var onLocalCursorMoved: ((NSPoint) -> Void)?
     /// Viewer: cursor just left the session window boundary.
     var onMouseExitedWindow: (() -> Void)?
+    /// Viewer: host's ghost cursor moved while viewer has control — show red overlay on viewer screen.
+    var onRemoteHostCursorMoved: ((NSPoint) -> Void)?
 
     // MARK: - Private state
 
@@ -58,6 +60,9 @@ final class ControlChannel {
     // Viewer side
     private var sendConnection: NWConnection?
     private var eventMonitors: [Any] = []
+
+    // Host side: throttle for host→viewer ghost cursor updates
+    private var lastHostCursorSent: TimeInterval = 0
 
     // Host side
     private var recvListener: NWListener?
@@ -140,9 +145,28 @@ final class ControlChannel {
 
     @MainActor
     private func handleViewerIncoming(_ event: ControlEvent) {
-        guard case .controlTransfer(let controller) = event else { return }
-        logger.info("ControlChannel viewer: control transferred to \(controller.rawValue)")
-        onControlTransfer?(controller)
+        switch event {
+        case .controlTransfer(let controller):
+            logger.info("ControlChannel viewer: control transferred to \(controller.rawValue)")
+            onControlTransfer?(controller)
+        case .hostCursorMoved(let nx, let ny):
+            onRemoteHostCursorMoved?(denormalise(nx: nx, ny: ny))
+        default:
+            break
+        }
+    }
+
+    /// Convert normalised [0,1] host-display coordinates to a screen point within
+    /// the viewer's session window. Mirrors the normalise() convention (top-left origin).
+    private func denormalise(nx: Double, ny: Double) -> NSPoint {
+        let frame: NSRect
+        if let f = sessionWindowFrameProvider?() { frame = f }
+        else if let s = NSScreen.main            { frame = s.frame }
+        else                                      { return .zero }
+        return NSPoint(
+            x: frame.origin.x + CGFloat(nx) * frame.width,
+            y: frame.origin.y + CGFloat(1.0 - ny) * frame.height
+        )
     }
 
     // MARK: - Viewer event monitors
@@ -258,7 +282,10 @@ final class ControlChannel {
 
         suppressionTap.onGhostMoved = { [weak self] pos in
             self?.hostPosition = pos
-            Task { @MainActor in self?.onHostCursorMoved?(pos) }
+            Task { @MainActor in
+                self?.onHostCursorMoved?(pos)
+                self?.streamHostCursorToViewer(pos)
+            }
         }
         suppressionTap.onReclaim = { [weak self] in
             Task { @MainActor in self?.hostDidClick() }
@@ -292,6 +319,22 @@ final class ControlChannel {
     private func hostDidClick() {
         guard currentController == .viewer else { return }
         transferControl(to: .host)
+    }
+
+    /// Stream the host's ghost cursor position to the viewer at ≤60 fps while viewer has control.
+    /// Coordinates are normalised [0,1] relative to the host's main display (top-left origin).
+    @MainActor
+    private func streamHostCursorToViewer(_ pos: NSPoint) {
+        guard currentController == .viewer else { return }
+        let now = Date().timeIntervalSinceReferenceDate
+        guard now - lastHostCursorSent > 0.016 else { return }
+        lastHostCursorSent = now
+        guard let screen = NSScreen.main else { return }
+        let nx = Double(max(0, min(1, (pos.x - screen.frame.minX) / screen.frame.width)))
+        let ny = Double(max(0, min(1, 1.0 - (pos.y - screen.frame.minY) / screen.frame.height)))
+        if let data = ControlEvent.hostCursorMoved(x: nx, y: ny).toData() {
+            peerConnection?.send(content: data, completion: .idempotent)
+        }
     }
 
     // MARK: - Host receive loop
@@ -336,8 +379,8 @@ final class ControlChannel {
                 injectKey(keyCode: keyCode, modifiers: modifiers, down: down)
             }
 
-        case .controlTransfer:
-            break  // host never receives this (it only sends it)
+        case .controlTransfer, .hostCursorMoved:
+            break  // host never receives these (it only sends them)
         }
     }
 

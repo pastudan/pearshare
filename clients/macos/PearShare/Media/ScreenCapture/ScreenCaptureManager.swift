@@ -2,6 +2,7 @@ import Foundation
 import ScreenCaptureKit
 import CoreMedia
 import CoreGraphics
+import OSLog
 
 // MARK: - Delegate
 
@@ -22,6 +23,7 @@ final class ScreenCaptureManager: NSObject {
 
     private var stream: SCStream?
     private var streamOutput: StreamOutput?
+    private var currentConfig: SCStreamConfiguration?
 
     // Capture config
     var framesPerSecond: Double = 30
@@ -93,7 +95,24 @@ final class ScreenCaptureManager: NSObject {
             try? await stream?.stopCapture()
             stream = nil
             streamOutput = nil
+            currentConfig = nil
             delegate?.screenCaptureManagerDidStop(self)
+        }
+    }
+
+    /// Dynamically toggle whether the system cursor is baked into the stream.
+    /// On when host has control (viewer needs to see where host cursor is);
+    /// off when viewer has control (viewer already knows their own cursor position).
+    func setShowsCursor(_ show: Bool) {
+        guard let stream, let config = currentConfig, config.showsCursor != show else { return }
+        config.showsCursor = show
+        stream.updateConfiguration(config) { error in
+            if let error {
+                Task { @MainActor in
+                    Logger(subsystem: "com.pearshare.app", category: "ScreenCapture")
+                        .error("setShowsCursor: \(error)")
+                }
+            }
         }
     }
 
@@ -148,8 +167,9 @@ final class ScreenCaptureManager: NSObject {
 
         config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         config.capturesAudio = false
-        config.showsCursor = false
+        config.showsCursor = true   // host has control at session start; will be toggled dynamically
 
+        self.currentConfig = config
         let output = StreamOutput()
         output.delegate = self
         self.streamOutput = output

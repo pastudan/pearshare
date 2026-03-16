@@ -44,6 +44,9 @@ final class MediaSession: NSObject {
     /// Window titles to exclude from screen capture (cursor overlay windows).
     var overlayWindowTitles: [String] = []
 
+    /// Toggle whether the system cursor is baked into the H.264 stream.
+    func setShowsCursor(_ show: Bool) { captureManager?.setShowsCursor(show) }
+
     // MARK: - Init
 
     init(descriptor: SessionDescriptor, role: SessionRole) {
@@ -182,14 +185,6 @@ final class MediaSession: NSObject {
             guard let self else { return }
             if let error { logger.error("Viewer: receive error \(error)"); return }
             guard let data else { return }
-            let line = "\(Date()) [MediaSession] Viewer: received UDP \(data.count) bytes\n"
-            if let d = line.data(using: .utf8) {
-                let path = "/tmp/pearshare-decoder.log"
-                if FileManager.default.fileExists(atPath: path),
-                   let fh = FileHandle(forWritingAtPath: path) {
-                    fh.seekToEndOfFile(); fh.write(d); fh.closeFile()
-                } else { try? d.write(to: URL(fileURLWithPath: path)) }
-            }
             self.depacketizer?.receive(packet: data)
             self.receiveVideoPackets(from: connection)
         }
