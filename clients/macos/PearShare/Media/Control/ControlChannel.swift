@@ -47,6 +47,8 @@ final class ControlChannel {
     var onMouseExitedWindow: (() -> Void)?
     /// Viewer: host's ghost cursor moved while viewer has control — show red overlay on viewer screen.
     var onRemoteHostCursorMoved: ((NSPoint) -> Void)?
+    /// Both sides: peer has ended the session (hangup event received, or host watchdog fired).
+    var onHangup: (() -> Void)?
 
     // MARK: - Private state
 
@@ -79,6 +81,13 @@ final class ControlChannel {
     /// CGEventTap that suppresses host's physical mouse while viewer has control.
     /// Injected events are tagged so the tap lets them through.
     private let suppressionTap = MouseSuppressionTap()
+    /// Host side: fires if no heartbeat arrives within the inactivity window.
+    private var viewerWatchdogTimer: Timer?
+    /// Viewer side: sends periodic heartbeat to host so the watchdog stays alive.
+    private var heartbeatTimer: Timer?
+
+    private static let heartbeatInterval: TimeInterval = 5
+    private static let viewerInactivityTimeout: TimeInterval = 30
 
     // MARK: - Init
 
@@ -97,7 +106,15 @@ final class ControlChannel {
         }
     }
 
+    /// Send a hangup event to the peer, then clean up. Must be called before stop().
+    func sendHangup() {
+        send(.hangup)
+    }
+
     func stop() {
+        heartbeatTimer?.invalidate(); heartbeatTimer = nil
+        viewerWatchdogTimer?.invalidate(); viewerWatchdogTimer = nil
+
         for m in eventMonitors { NSEvent.removeMonitor(m) }
         eventMonitors.removeAll()
         if let m = hostMouseMonitor     { NSEvent.removeMonitor(m); hostMouseMonitor = nil }
@@ -209,15 +226,42 @@ final class ControlChannel {
         // Drag events: forward cursor position so the host tracks the pointer during a drag.
         // Without these, the host sees mouseDown + mouseUp with no movement in between,
         // breaking click-drag operations (file moves, text selection, resizing, etc.)
-        addLocal([.leftMouseDragged, .rightMouseDragged]) { [weak self] _ in
-            guard let self, self.isMouseInsideWindow() else { return }
-            sendCursorUpdate(to: self)
+        // Track which buttons are currently held so drag events continue even when
+        // the cursor leaves the session window bounds mid-drag (e.g. dragging a host
+        // window to the edge of the session view).
+        var leftHeld = false
+        var rightHeld = false
+
+        addLocal(.leftMouseDown) { [weak self] _ in
+            guard self?.isMouseInsideWindow() == true else { return }
+            leftHeld = true
+            self?.sendButton(.left, down: true)
+        }
+        addLocal(.leftMouseUp) { [weak self] _ in
+            let wasHeld = leftHeld
+            leftHeld = false
+            // Always send mouseUp to release a drag even if the cursor drifted outside.
+            guard self?.isMouseInsideWindow() == true || wasHeld else { return }
+            self?.sendButton(.left, down: false)
+        }
+        addLocal(.rightMouseDown) { [weak self] _ in
+            guard self?.isMouseInsideWindow() == true else { return }
+            rightHeld = true
+            self?.sendButton(.right, down: true)
+        }
+        addLocal(.rightMouseUp) { [weak self] _ in
+            let wasHeld = rightHeld
+            rightHeld = false
+            guard self?.isMouseInsideWindow() == true || wasHeld else { return }
+            self?.sendButton(.right, down: false)
         }
 
-        addLocal(.leftMouseDown)  { [weak self] _ in guard self?.isMouseInsideWindow() == true else { return }; self?.sendButton(.left,  down: true)  }
-        addLocal(.leftMouseUp)    { [weak self] _ in guard self?.isMouseInsideWindow() == true else { return }; self?.sendButton(.left,  down: false) }
-        addLocal(.rightMouseDown) { [weak self] _ in guard self?.isMouseInsideWindow() == true else { return }; self?.sendButton(.right, down: true)  }
-        addLocal(.rightMouseUp)   { [weak self] _ in guard self?.isMouseInsideWindow() == true else { return }; self?.sendButton(.right, down: false) }
+        // Forward drag cursor updates; continue even when the cursor leaves the window
+        // (the user may drag a host window all the way to the edge of the session view).
+        addLocal([.leftMouseDragged, .rightMouseDragged]) { [weak self] _ in
+            guard let self, leftHeld || rightHeld || self.isMouseInsideWindow() else { return }
+            sendCursorUpdate(to: self)
+        }
         addLocal(.scrollWheel)    { [weak self] e  in guard self?.isMouseInsideWindow() == true else { return }; self?.sendScrollEvent(e) }
 
         addLocal(.keyDown) { [weak self] e in self?.sendKey(e, down: true)  }
@@ -394,7 +438,13 @@ final class ControlChannel {
             }
 
         case .controlTransfer, .hostCursorMoved:
-            break  // host never receives these (it only sends them)
+            break  // host only sends these; viewer should never send them
+
+        case .hangup:
+            break  // handled upstream in receiveFromViewer before this switch
+
+        case .heartbeat:
+            break  // handled upstream (watchdog timer reset)
         }
     }
 
@@ -441,6 +491,11 @@ final class ControlChannel {
         return NSPoint(x: pt.x, y: h - pt.y)
     }
 
+    // Tracks which mouse buttons the viewer currently holds down so moveCGCursor can
+    // inject leftMouseDragged / rightMouseDragged events (rather than a silent warp)
+    // while a drag is in progress — this is what makes host apps actually track the drag.
+    private var heldButtons: Set<CGMouseButton> = []
+
     // MARK: - CGEvent injection (host)
 
     // A dedicated CGEventSource whose userData == eventTag.
@@ -463,10 +518,26 @@ final class ControlChannel {
     }
 
     private func moveCGCursor(to pt: CGPoint) {
-        // CGWarpMouseCursorPosition moves the cursor WITHOUT generating any mouse event.
-        // Injecting a mouseMoved CGEvent causes macOS to synthesize a HID-level mouseMoved
-        // with the cursor position jump as deltaX/Y — which hits our tap as tag:0 and
-        // corrupts the ghost position delta accumulation. Warp is silent at every level.
+        // While a button is held we must inject a dragged event (not just warp) so that
+        // host apps (Finder, windows, etc.) actually receive a drag and track it.
+        // When no button is held, CGWarpMouseCursorPosition is used because injecting a
+        // mouseMoved CGEvent synthesises a HID-level event whose large delta would corrupt
+        // the ghost position accumulation in the suppression tap.
+        if heldButtons.contains(.left) {
+            if let e = CGEvent(mouseEventSource: Self.injectionSource,
+                               mouseType: .leftMouseDragged,
+                               mouseCursorPosition: pt, mouseButton: .left) {
+                postInjected(e)
+                return
+            }
+        } else if heldButtons.contains(.right) {
+            if let e = CGEvent(mouseEventSource: Self.injectionSource,
+                               mouseType: .rightMouseDragged,
+                               mouseCursorPosition: pt, mouseButton: .right) {
+                postInjected(e)
+                return
+            }
+        }
         CGWarpMouseCursorPosition(pt)
     }
 
@@ -477,6 +548,8 @@ final class ControlChannel {
         case .right: (cgButton, downType, upType) = (.right, .rightMouseDown, .rightMouseUp)
         case .other: (cgButton, downType, upType) = (.center,.otherMouseDown, .otherMouseUp)
         }
+        // Track held state so moveCGCursor can inject drag events while button is down.
+        if down { heldButtons.insert(cgButton) } else { heldButtons.remove(cgButton) }
         // Warp cursor to the click position first so the button event injection doesn't
         // carry a cursor position jump — eliminating any synthetic HID move side-effects.
         CGWarpMouseCursorPosition(pt)

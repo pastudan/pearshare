@@ -6,8 +6,8 @@ import Foundation
 // All pointer coordinates are normalized to [0, 1] relative to the host display.
 //
 // Direction:
-//   viewer → host : mouseMoved, mouseButton, scroll, keyEvent
-//   host → viewer : controlTransfer, hostCursorMoved
+//   viewer → host : mouseMoved, mouseButton, scroll, keyEvent, hangup, heartbeat
+//   host → viewer : controlTransfer, hostCursorMoved, hangup
 
 enum ControlEvent: Codable {
     case mouseMoved(x: Double, y: Double)
@@ -18,6 +18,10 @@ enum ControlEvent: Codable {
     case controlTransfer(controller: Controller)
     /// Sent host → viewer while viewer has control: host's ghost cursor position [0,1].
     case hostCursorMoved(x: Double, y: Double)
+    /// Either side: notifies peer that this side is ending the session.
+    case hangup
+    /// Viewer → host keepalive; host ends the session if none arrive within the watchdog window.
+    case heartbeat
 
     // MARK: - Nested types
 
@@ -41,6 +45,7 @@ enum ControlEvent: Codable {
 
     private enum EventType: String, Codable {
         case mouseMoved, mouseButton, scroll, keyEvent, controlTransfer, hostCursorMoved
+        case hangup, heartbeat
     }
 
     init(from decoder: Decoder) throws {
@@ -81,6 +86,10 @@ enum ControlEvent: Codable {
                 x: try c.decode(Double.self, forKey: .x),
                 y: try c.decode(Double.self, forKey: .y)
             )
+        case .hangup:
+            self = .hangup
+        case .heartbeat:
+            self = .heartbeat
         }
     }
 
@@ -115,6 +124,10 @@ enum ControlEvent: Codable {
             try c.encode(EventType.hostCursorMoved, forKey: .type)
             try c.encode(x, forKey: .x)
             try c.encode(y, forKey: .y)
+        case .hangup:
+            try c.encode(EventType.hangup, forKey: .type)
+        case .heartbeat:
+            try c.encode(EventType.heartbeat, forKey: .type)
         }
     }
 
