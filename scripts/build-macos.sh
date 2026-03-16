@@ -233,7 +233,10 @@ do_deploy() {
     "$app_path" \
     "$DEPLOY_HOST:~/Downloads/"
 
-  echo "✓  Deployed to $DEPLOY_HOST:~/Downloads/PearShare.app"
+  echo "→  Launching PearShare on $DEPLOY_HOST..."
+  ssh "$DEPLOY_HOST" 'open ~/Downloads/PearShare.app'
+
+  echo "✓  Deployed and launched on $DEPLOY_HOST"
 }
 
 # ── App path helper ───────────────────────────────────────────────────────────

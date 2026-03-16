@@ -3,6 +3,9 @@ import Network
 import CoreMedia
 import CoreVideo
 import ScreenCaptureKit
+import OSLog
+
+private let logger = Logger(subsystem: "com.pearshare.app", category: "MediaSession")
 
 // MARK: - Session Role
 
@@ -25,6 +28,8 @@ final class MediaSession: NSObject {
     let renderer: VideoRenderer?   // non-nil when role == .viewer
 
     private var captureManager: ScreenCaptureManager?
+    // Exposed so AppDelegate can attach cursor/activity callbacks after start()
+    private(set) var controlChannel: ControlChannel?
     nonisolated(unsafe) private var decoder: H264Decoder?
     nonisolated(unsafe) private var depacketizer: RTPDepacketizer?
     private var videoRecvListener: NWListener?
@@ -36,6 +41,8 @@ final class MediaSession: NSObject {
     nonisolated(unsafe) private var videoSendConnection: NWConnection?
 
     var onStop: (() -> Void)?
+    /// Window title to exclude from screen capture (the remote cursor overlay).
+    var overlayWindowTitle: String?
 
     // MARK: - Init
 
@@ -60,55 +67,68 @@ final class MediaSession: NSObject {
     // MARK: - Host pipeline: capture → encode → send
 
     private func startHostPipeline() async throws {
-        // 1. Pick the primary display
         let content = try await ScreenCaptureManager.availableContent()
         guard let display = content.displays.first else {
             throw MediaSessionError.noDisplayAvailable
         }
+        logger.info("Host: display \(display.width)x\(display.height), sending to \(self.descriptor.peerIP):\(self.descriptor.videoPort)")
 
-        // 2. Set up encoder
         let enc = H264Encoder()
         enc.delegate = self
         enc.frameRate = 30
         try enc.prepare(width: display.width, height: display.height)
         self.encoder = enc
+        logger.info("Host: encoder ready")
 
-        // 3. Set up packetizer
         self.packetizer = RTPPacketizer(streamID: kPearStreamVideo)
 
-        // 4. Open UDP send socket to viewer's video port
         let conn = NWConnection(
             host: NWEndpoint.Host(descriptor.peerIP),
             port: NWEndpoint.Port(rawValue: UInt16(descriptor.videoPort))!,
             using: .udp
         )
+        conn.stateUpdateHandler = { state in
+            logger.info("Host: UDP conn state → \(String(describing: state))")
+        }
         conn.start(queue: .global(qos: .userInteractive))
         self.videoSendConnection = conn
 
-        // 5. Start capture
+        // Control channel: host side listens for remote input events
+        let ctrl = ControlChannel(role: .host, port: descriptor.controlPort, peerIP: nil)
+        ctrl.start()
+        self.controlChannel = ctrl
+        logger.info("Host: control channel listening on port \(self.descriptor.controlPort)")
+
         let capture = ScreenCaptureManager()
         capture.delegate = self
         capture.framesPerSecond = 30
+        capture.excludedBundleIDs = ExcludedAppsStore.shared.enabledBundleIDs
         try await capture.startCapture(display: display)
         self.captureManager = capture
+        logger.info("Host: capture started")
     }
 
     // MARK: - Viewer pipeline: receive → decode → render
 
     private func startViewerPipeline() throws {
-        // 1. Set up depacketizer
+        logger.info("Viewer: starting pipeline, listening on port \(self.descriptor.videoPort)")
+
+        // Control channel: viewer side captures events and sends to host
+        let ctrl = ControlChannel(role: .viewer, port: descriptor.controlPort, peerIP: descriptor.peerIP)
+        ctrl.start()
+        self.controlChannel = ctrl
+        logger.info("Viewer: control channel sending to \(self.descriptor.peerIP):\(self.descriptor.controlPort)")
+
         let depkt = RTPDepacketizer(streamID: kPearStreamVideo)
         depkt.onFrame = { [weak self] frame in
             self?.handleReassembledFrame(frame)
         }
         self.depacketizer = depkt
 
-        // 2. Set up decoder
         let dec = H264Decoder()
         dec.delegate = self
         self.decoder = dec
 
-        // 3. Listen on our video port for incoming RTP packets
         let params = NWParameters.udp
         params.allowLocalEndpointReuse = true
 
@@ -119,18 +139,26 @@ final class MediaSession: NSObject {
             throw MediaSessionError.bindFailed
         }
 
+        listener.stateUpdateHandler = { state in
+            logger.info("Viewer: listener state → \(String(describing: state))")
+        }
+
         listener.newConnectionHandler = { [weak self] conn in
+            logger.info("Viewer: got UDP connection from \(String(describing: conn.endpoint))")
             conn.start(queue: .global(qos: .userInteractive))
             self?.receiveVideoPackets(from: conn)
         }
         listener.start(queue: .global(qos: .userInteractive))
         self.videoRecvListener = listener
+        logger.info("Viewer: listener started on port \(self.descriptor.videoPort)")
     }
 
     // MARK: - Stop
 
     func stop() {
         captureManager?.stopCapture()
+        controlChannel?.stop()
+        controlChannel = nil
         encoder?.flush()
         encoder?.invalidate()
         decoder?.invalidate()
@@ -150,13 +178,24 @@ final class MediaSession: NSObject {
 
     nonisolated private func receiveVideoPackets(from connection: NWConnection) {
         connection.receiveMessage { [weak self] data, _, _, error in
-            guard let self, error == nil, let data else { return }
+            guard let self else { return }
+            if let error { logger.error("Viewer: receive error \(error)"); return }
+            guard let data else { return }
+            let line = "\(Date()) [MediaSession] Viewer: received UDP \(data.count) bytes\n"
+            if let d = line.data(using: .utf8) {
+                let path = "/tmp/pearshare-decoder.log"
+                if FileManager.default.fileExists(atPath: path),
+                   let fh = FileHandle(forWritingAtPath: path) {
+                    fh.seekToEndOfFile(); fh.write(d); fh.closeFile()
+                } else { try? d.write(to: URL(fileURLWithPath: path)) }
+            }
             self.depacketizer?.receive(packet: data)
             self.receiveVideoPackets(from: connection)
         }
     }
 
     nonisolated private func handleReassembledFrame(_ frame: RTPDepacketizer.ReassembledFrame) {
+        logger.info("Viewer: reassembled frame \(frame.nalUnit.count) bytes, keyframe=\(frame.isKeyframe)")
         decoder?.decode(annexBData: frame.nalUnit, isKeyframe: frame.isKeyframe)
     }
 }
@@ -181,6 +220,7 @@ extension MediaSession: H264EncoderDelegate {
               let conn = videoSendConnection else { return }
 
         let packets = pktz.packetize(nalUnit: data, isKeyframe: isKeyframe, presentationTimestamp: presentationTimestamp)
+        if isKeyframe { logger.info("Host: sending keyframe, \(packets.count) RTP packets, \(data.count) bytes") }
         for packet in packets {
             conn.send(content: packet, completion: .idempotent)
         }
@@ -191,6 +231,7 @@ extension MediaSession: H264EncoderDelegate {
 
 extension MediaSession: H264DecoderDelegate {
     nonisolated func h264Decoder(_ decoder: H264Decoder, didDecodeFrame pixelBuffer: CVPixelBuffer, presentationTimestamp: CMTime) {
+        logger.info("Viewer: decoded frame, enqueueing to renderer")
         renderer?.enqueue(pixelBuffer: pixelBuffer)
     }
 }

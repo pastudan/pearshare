@@ -2,6 +2,21 @@ import Foundation
 import VideoToolbox
 import CoreMedia
 import CoreVideo
+import OSLog
+
+private let logger = Logger(subsystem: "com.pearshare.app", category: "H264Decoder")
+private func dlog(_ msg: String) {
+    let line = "\(Date()) [H264Decoder] \(msg)\n"
+    let path = "/tmp/pearshare-decoder.log"
+    if let data = line.data(using: .utf8) {
+        if FileManager.default.fileExists(atPath: path),
+           let fh = FileHandle(forWritingAtPath: path) {
+            fh.seekToEndOfFile(); fh.write(data); fh.closeFile()
+        } else {
+            try? data.write(to: URL(fileURLWithPath: path))
+        }
+    }
+}
 
 // MARK: - Delegate
 
@@ -28,30 +43,25 @@ final class H264Decoder {
     /// Feed a complete Annex B NAL unit (may contain SPS, PPS, IDR, non-IDR slices).
     func decode(annexBData: Data, isKeyframe: Bool) {
         let nalUnits = splitAnnexB(annexBData)
+        dlog("decode called, \(nalUnits.count) NAL units, isKeyframe=\(isKeyframe), totalBytes=\(annexBData.count)")
 
         for nal in nalUnits {
             guard !nal.isEmpty else { continue }
             let nalType = nal[0] & 0x1F
+            dlog("NAL type=\(nalType), size=\(nal.count)")
 
             switch nalType {
-            case 7: // SPS
-                sps = nal
-            case 8: // PPS
-                pps = nal
-                // Once we have both SPS and PPS, build the format description
-                if let sps, let pps {
-                    rebuildFormatDescription(sps: sps, pps: pps)
-                }
-            case 5: // IDR (keyframe)
-                if formatDescription != nil {
-                    decodeSlice(nal, isKeyframe: true)
-                }
-            case 1: // Non-IDR slice
-                if formatDescription != nil {
-                    decodeSlice(nal, isKeyframe: false)
-                }
-            default:
-                break
+            case 7: sps = nal; dlog("stored SPS \(nal.count) bytes")
+            case 8:
+                pps = nal; dlog("stored PPS \(nal.count) bytes")
+                if let sps, let pps { rebuildFormatDescription(sps: sps, pps: pps) }
+            case 5:
+                if formatDescription != nil { dlog("decoding IDR \(nal.count) bytes"); decodeSlice(nal, isKeyframe: true) }
+                else { dlog("DROP IDR — no fmt desc") }
+            case 1:
+                if formatDescription != nil { decodeSlice(nal, isKeyframe: false) }
+                else { dlog("DROP non-IDR — no fmt desc") }
+            default: dlog("ignoring NAL type=\(nalType)")
             }
         }
     }
@@ -101,9 +111,10 @@ final class H264Decoder {
         }
 
         guard status == noErr, let desc else {
-            print("[H264Decoder] Failed to create format description: \(status)")
+            dlog("FAIL create format description: \(status)")
             return
         }
+        dlog("format description OK")
         formatDescription = desc
         setupDecompressionSession(formatDescription: desc)
     }
@@ -125,9 +136,10 @@ final class H264Decoder {
         )
 
         guard status == noErr, let session else {
-            print("[H264Decoder] Failed to create decompression session: \(status)")
+            dlog("FAIL create decompression session: \(status)")
             return
         }
+        dlog("decompression session OK")
         self.session = session
     }
 
@@ -194,7 +206,11 @@ final class H264Decoder {
             flags: [._EnableAsynchronousDecompression],
             infoFlagsOut: nil
         ) { [weak self] status, _, pixelBuffer, pts, _ in
-            guard let self, status == noErr, let pixelBuffer else { return }
+            guard let self, status == noErr, let pixelBuffer else {
+                if status != noErr { dlog("VTDecompress callback error status=\(status)") }
+                return
+            }
+            dlog("decoded frame → delegate")
             self.delegate?.h264Decoder(self, didDecodeFrame: pixelBuffer, presentationTimestamp: pts)
         }
     }

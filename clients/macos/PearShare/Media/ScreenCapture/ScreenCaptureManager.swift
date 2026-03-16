@@ -27,6 +27,11 @@ final class ScreenCaptureManager: NSObject {
     var framesPerSecond: Double = 30
     var targetDisplay: SCDisplay?
     var targetWindow: SCWindow?
+    /// Windows to exclude from capture (e.g. the RemoteCursorOverlayWindow).
+    var excludedWindows: [SCWindow] = []
+
+    /// Bundle IDs of apps whose windows should be blacked out in the capture stream.
+    var excludedBundleIDs: [String] = []
 
     // MARK: - Available content
 
@@ -40,7 +45,10 @@ final class ScreenCaptureManager: NSObject {
     func startCapture(display: SCDisplay) async throws {
         self.targetDisplay = display
 
-        let filter = SCContentFilter(display: display, excludingWindows: [])
+        // Collect windows belonging to excluded apps and pass them to the filter.
+        // ScreenCaptureKit renders excluded windows as solid black rectangles.
+        let excludedWindows = await resolveExcludedWindows()
+        let filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
         try await startStream(with: filter)
     }
 
@@ -62,6 +70,19 @@ final class ScreenCaptureManager: NSObject {
 
     // MARK: - Internal
 
+    /// Fetches all on-screen windows and returns those whose owning app bundle ID is excluded.
+    private func resolveExcludedWindows() async -> [SCWindow] {
+        guard !excludedBundleIDs.isEmpty else { return [] }
+        guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) else {
+            return []
+        }
+        let excluded = Set(excludedBundleIDs)
+        return content.windows.filter { window in
+            guard let bundleID = window.owningApplication?.bundleIdentifier else { return false }
+            return excluded.contains(bundleID)
+        }
+    }
+
     private func startStream(with filter: SCContentFilter) async throws {
         let config = SCStreamConfiguration()
 
@@ -81,13 +102,8 @@ final class ScreenCaptureManager: NSObject {
         config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(framesPerSecond))
         config.queueDepth = 3
 
-        // Pixel format: 420v (biplanar YCbCr) — VideoToolbox H.264 encoder prefers this
         config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
-
-        // Capture audio of the display too (for system audio passthrough in v2)
         config.capturesAudio = false
-
-        // Show cursor in capture
         config.showsCursor = true
 
         let output = StreamOutput()

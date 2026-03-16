@@ -2,12 +2,21 @@ import SwiftUI
 
 @MainActor
 protocol ContactListViewDelegate: AnyObject {
+    /// Caller shares their screen to the peer (caller = host, peer = viewer).
     func ring(peer: PearPeer)
+    /// Caller asks the peer to share their screen (caller = viewer, peer = host).
+    func requestScreen(from peer: PearPeer)
+    /// Called when the user confirms trust through TrustApprovalView.
+    func grantTrust(to peer: PearPeer)
 }
 
 struct ContactListView: View {
     @ObservedObject var peerStore: PeerStore
     weak var delegate: ContactListViewDelegate?
+
+    @State private var showingExcludedApps = false
+    @State private var showingTrustedDevices = false
+    @State private var trustApprovalPeer: PearPeer? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -19,6 +28,20 @@ struct ContactListView: View {
         }
         .frame(width: 300, height: 400)
         .background(.regularMaterial)
+        .sheet(isPresented: $showingExcludedApps) {
+            ExcludedAppsView(store: ExcludedAppsStore.shared)
+        }
+        .sheet(isPresented: $showingTrustedDevices) {
+            TrustedDevicesView()
+        }
+        .sheet(item: $trustApprovalPeer) { peer in
+            TrustApprovalView(peer: peer) {
+                delegate?.grantTrust(to: peer)
+                trustApprovalPeer = nil
+            } onCancelled: {
+                trustApprovalPeer = nil
+            }
+        }
     }
 
     // MARK: - Header
@@ -44,6 +67,24 @@ struct ContactListView: View {
 
     private var footer: some View {
         HStack {
+            Button {
+                showingExcludedApps = true
+            } label: {
+                Image(systemName: "eye.slash").font(.caption)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Hidden apps")
+
+            Button {
+                showingTrustedDevices = true
+            } label: {
+                Image(systemName: "lock.shield").font(.caption)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Trusted Devices")
+
             Spacer()
             Button("Quit PearShare") {
                 NSApplication.shared.terminate(nil)
@@ -64,9 +105,13 @@ struct ContactListView: View {
             emptyState
         } else {
             List(peerStore.peers) { peer in
-                PeerRowView(peer: peer) {
-                    delegate?.ring(peer: peer)
-                }
+                PeerRowView(
+                    peer: peer,
+                    isTrusted: TrustedDeviceStore.shared.isTrusted(peerID: peer.id),
+                    onShare: { delegate?.ring(peer: peer) },
+                    onRequest: { delegate?.requestScreen(from: peer) },
+                    onAlwaysAllow: { trustApprovalPeer = peer }
+                )
             }
             .listStyle(.plain)
         }
@@ -94,7 +139,10 @@ struct ContactListView: View {
 
 struct PeerRowView: View {
     let peer: PearPeer
-    let onRing: () -> Void
+    let isTrusted: Bool
+    let onShare: () -> Void
+    let onRequest: () -> Void
+    let onAlwaysAllow: () -> Void
 
     @State private var isHovered = false
 
@@ -107,8 +155,19 @@ struct PeerRowView: View {
 
             // Name + platform
             VStack(alignment: .leading, spacing: 2) {
-                Text(peer.displayName)
-                    .font(.subheadline.weight(.medium))
+                HStack(spacing: 5) {
+                    Text(peer.displayName)
+                        .font(.subheadline.weight(.medium))
+                    if isTrusted {
+                        Text("Auto-answers")
+                            .font(.caption2.weight(.medium))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.orange.opacity(0.15), in: Capsule())
+                            .foregroundStyle(.orange)
+                            .help("When this device calls you, your Mac will auto-answer and share your screen — no prompt")
+                    }
+                }
                 HStack(spacing: 4) {
                     Image(systemName: platformIcon)
                         .font(.caption2)
@@ -120,22 +179,68 @@ struct PeerRowView: View {
 
             Spacer()
 
-            // Ring button — appears on hover
+            // Actions — appear on hover
             if isHovered && peer.status != .busy {
-                Button(action: onRing) {
-                    Image(systemName: "phone.fill")
-                        .font(.caption)
+                HStack(spacing: 8) {
+                    // Secondary: Request (text link style)
+                    Button(action: onRequest) {
+                        Text("Request")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .underline()
+                    }
+                    .buttonStyle(.plain)
+                    .transition(.opacity)
+                    .help("Ask \(peer.displayName) to share their screen with you")
+
+                    // Primary: Share (icon button)
+                    Button(action: onShare) {
+                        Image(systemName: "rectangle.on.rectangle.fill")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.mini)
+                    .tint(.green)
+                    .transition(.opacity.combined(with: .scale))
+                    .help("Share your screen with \(peer.displayName)")
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.mini)
-                .tint(.green)
-                .transition(.opacity.combined(with: .scale))
             }
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
         .animation(.easeInOut(duration: 0.15), value: isHovered)
+        .contextMenu {
+            Button {
+                onShare()
+            } label: {
+                Label("Share My Screen", systemImage: "rectangle.on.rectangle.fill")
+            }
+            .disabled(peer.status == .busy)
+
+            Button {
+                onRequest()
+            } label: {
+                Label("Request Their Screen", systemImage: "rectangle.on.rectangle")
+            }
+            .disabled(peer.status == .busy)
+
+            Divider()
+
+            if isTrusted {
+                Button {
+                    onAlwaysAllow()
+                } label: {
+                    Label("Manage Trust...", systemImage: "lock.shield")
+                }
+            } else {
+                Button {
+                    onAlwaysAllow()
+                } label: {
+                    Label("Always Allow (Trusted Device)...", systemImage: "lock.open")
+                }
+            }
+        }
     }
 
     private var statusColor: Color {

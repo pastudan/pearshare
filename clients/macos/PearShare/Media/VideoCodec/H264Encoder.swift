@@ -125,7 +125,6 @@ final class H264Encoder {
 
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
 
-        // A frame is a keyframe if it is NOT marked as non-sync
         let attachmentsArray = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false)
         let isKeyframe: Bool
         if let array = attachmentsArray as? [[CFString: Any]], let first = array.first {
@@ -134,11 +133,53 @@ final class H264Encoder {
             isKeyframe = true
         }
 
-        var data = Data()
-        CMBlockBufferCopyDataBytes(dataBuffer, atOffset: 0, dataLength: dataBuffer.dataLength, destination: &data)
+        let byteCount = dataBuffer.dataLength
+        var avccData = Data(count: byteCount)
+        let copyStatus = avccData.withUnsafeMutableBytes { ptr -> OSStatus in
+            guard let dest = ptr.baseAddress else { return kCMBlockBufferBadLengthParameterErr }
+            return CMBlockBufferCopyDataBytes(dataBuffer, atOffset: 0, dataLength: byteCount, destination: dest)
+        }
+        guard copyStatus == noErr else { return }
 
-        let annexB = Self.avccToAnnexB(data)
+        var annexB = Data()
+
+        // On keyframes, prepend SPS + PPS from the format description so the
+        // decoder always has parameter sets before the IDR slice.
+        if isKeyframe, let fmt = sampleBuffer.formatDescription {
+            annexB.append(Self.extractParameterSets(from: fmt))
+        }
+
+        annexB.append(Self.avccToAnnexB(avccData))
+        guard !annexB.isEmpty else { return }
+
         delegate?.h264Encoder(self, didEncodeNALUnit: annexB, isKeyframe: isKeyframe, presentationTimestamp: pts)
+    }
+
+    // MARK: - Extract SPS/PPS from format description
+
+    /// Returns SPS and PPS as Annex B NAL units (each prefixed with 0x00 0x00 0x00 0x01).
+    private static func extractParameterSets(from fmt: CMVideoFormatDescription) -> Data {
+        var result = Data()
+        var count = 0
+        CMVideoFormatDescriptionGetH264ParameterSetAtIndex(fmt, parameterSetIndex: 0,
+            parameterSetPointerOut: nil, parameterSetSizeOut: nil,
+            parameterSetCountOut: &count, nalUnitHeaderLengthOut: nil)
+
+        for i in 0 ..< count {
+            var ptr: UnsafePointer<UInt8>?
+            var size = 0
+            let status = CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
+                fmt, parameterSetIndex: i,
+                parameterSetPointerOut: &ptr,
+                parameterSetSizeOut: &size,
+                parameterSetCountOut: nil,
+                nalUnitHeaderLengthOut: nil)
+            if status == noErr, let ptr, size > 0 {
+                result.append(contentsOf: [0x00, 0x00, 0x00, 0x01])
+                result.append(UnsafeBufferPointer(start: ptr, count: size))
+            }
+        }
+        return result
     }
 
     // MARK: - AVCC → Annex B conversion
@@ -150,19 +191,18 @@ final class H264Encoder {
         result.reserveCapacity(avcc.count + 16)
         var offset = 0
 
-        while offset < avcc.count - 4 {
-            // Read 4-byte big-endian NAL unit length
-            let nalLength = avcc.withUnsafeBytes { ptr -> Int in
-                let raw = ptr.baseAddress!.advanced(by: offset)
-                return Int(UInt32(bigEndian: raw.load(as: UInt32.self)))
-            }
-            offset += 4
-            guard nalLength > 0, offset + nalLength <= avcc.count else { break }
+        avcc.withUnsafeBytes { ptr in
+            let base = ptr.baseAddress!
+            while offset + 4 <= ptr.count {
+                // loadUnaligned avoids the alignment trap that raw.load() requires
+                let nalLength = Int(UInt32(bigEndian: (base + offset).loadUnaligned(as: UInt32.self)))
+                offset += 4
+                guard nalLength > 0, offset + nalLength <= ptr.count else { break }
 
-            // Annex B start code
-            result.append(contentsOf: [0x00, 0x00, 0x00, 0x01])
-            result.append(avcc[offset ..< offset + nalLength])
-            offset += nalLength
+                result.append(contentsOf: [0x00, 0x00, 0x00, 0x01])
+                result.append(avcc[offset ..< offset + nalLength])
+                offset += nalLength
+            }
         }
 
         return result

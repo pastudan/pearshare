@@ -35,5 +35,7 @@
 		<string>_pearshare._tcp</string>
 		<string>_pearshare._udp</string>
 	</array>
+	<key>NSAccessibilityUsageDescription</key>
+	<string>PearShare needs Accessibility access to inject mouse and keyboard events when a remote collaborator controls your screen.</string>
 </dict>
 </plist>

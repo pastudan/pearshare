@@ -17,6 +17,7 @@
 		9D4ACE1466C14C169ADCD9C3 /* TailscaleClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C181EDC836A4AFDA525BB25 /* TailscaleClient.swift */; };
 		B1B196AF16E0456D9A380952 /* PeerDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 684E109700604C31B3B7D851 /* PeerDiscovery.swift */; };
 		BE5646B78B474DD684E88F66 /* ScreenCaptureManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8D48C573BF64685A94C10D2 /* ScreenCaptureManager.swift */; };
+		A1B2C3D4E5F600001234ABCD /* ScreenCapturePermission.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F600005678ABCD /* ScreenCapturePermission.swift */; };
 		C944A87C8DE1408E8F5D36CB /* IncomingRingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58A9BB7C95C94E2B8FE225BA /* IncomingRingView.swift */; };
 		E97551AD15CC49ADB93A4873 /* ContactListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F307B2D112D4F8BBBAB9D08 /* ContactListView.swift */; };
 		EED27FA274CF4FC791B19C1D /* VideoDisplayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96C53CCCC8AA4D84BABD2F70 /* VideoDisplayView.swift */; };
@@ -25,6 +26,14 @@
 		FA5923B5E4734CC296815432 /* H264Decoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42281B5310EC4B7684CDE6B3 /* H264Decoder.swift */; };
 		FA7A17E2E2AE48D4B2987973 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15138D24F9DE490589B0B678 /* AppDelegate.swift */; };
 		FCBFE54FAB06462DBC647D95 /* PearShareApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 654767F27A1E4DDE80D414CE /* PearShareApp.swift */; };
+		AA001122334455667788AABB /* ExcludedAppsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA001122334455667788CCDD /* ExcludedAppsStore.swift */; };
+		BB001122334455667788AABB /* ExcludedAppsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB001122334455667788CCDD /* ExcludedAppsView.swift */; };
+		AA000001000000000000CE02 /* ControlEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000001000000000000CE01 /* ControlEvent.swift */; };
+		AA000001000000000000CC02 /* ControlChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000001000000000000CC01 /* ControlChannel.swift */; };
+		AA000001000000000000RC02 /* RemoteCursorOverlayWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000001000000000000RC01 /* RemoteCursorOverlayWindow.swift */; };
+		TD000001000000000000TD02 /* TrustedDeviceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = TD000001000000000000TD01 /* TrustedDeviceStore.swift */; };
+		TA000001000000000000TA02 /* TrustApprovalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = TA000001000000000000TA01 /* TrustApprovalView.swift */; };
+		TV000001000000000000TV02 /* TrustedDevicesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = TV000001000000000000TV01 /* TrustedDevicesView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -47,8 +56,17 @@
 		96C53CCCC8AA4D84BABD2F70 /* VideoDisplayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoDisplayView.swift; sourceTree = "<group>"; };
 		EBF50671E3E641A08FBDEB07 /* H264Encoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = H264Encoder.swift; sourceTree = "<group>"; };
 		F8D48C573BF64685A94C10D2 /* ScreenCaptureManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCaptureManager.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F600005678ABCD /* ScreenCapturePermission.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCapturePermission.swift; sourceTree = "<group>"; };
 		FDFD1CB6CE1F454B9621856A /* PearShare.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PearShare.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		FE38E9493AE34450A92365C7 /* MediaSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaSession.swift; sourceTree = "<group>"; };
+		AA001122334455667788CCDD /* ExcludedAppsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExcludedAppsStore.swift; sourceTree = "<group>"; };
+		BB001122334455667788CCDD /* ExcludedAppsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExcludedAppsView.swift; sourceTree = "<group>"; };
+		AA000001000000000000CE01 /* ControlEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlEvent.swift; sourceTree = "<group>"; };
+		AA000001000000000000CC01 /* ControlChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlChannel.swift; sourceTree = "<group>"; };
+		AA000001000000000000RC01 /* RemoteCursorOverlayWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteCursorOverlayWindow.swift; sourceTree = "<group>"; };
+		TD000001000000000000TD01 /* TrustedDeviceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrustedDeviceStore.swift; sourceTree = "<group>"; };
+		TA000001000000000000TA01 /* TrustApprovalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrustApprovalView.swift; sourceTree = "<group>"; };
+		TV000001000000000000TV01 /* TrustedDevicesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrustedDevicesView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -70,6 +88,7 @@
 				975239B856A84468AE8CE0BB /* Signaling */,
 				C6B74DC117294A56B776291D /* UI */,
 				F01398F7F7AB4262B0EA895F /* Media */,
+				TD000001000000000000TG01 /* Trusted */,
 				D88CEDC773EB4366A6FEB474 /* Resources */,
 				63980CB6A86145BB99B7A78C /* Products */,
 			);
@@ -98,6 +117,8 @@
 			isa = PBXGroup;
 			children = (
 				F8D48C573BF64685A94C10D2 /* ScreenCaptureManager.swift */,
+				A1B2C3D4E5F600005678ABCD /* ScreenCapturePermission.swift */,
+				AA001122334455667788CCDD /* ExcludedAppsStore.swift */,
 				96C53CCCC8AA4D84BABD2F70 /* VideoDisplayView.swift */,
 			);
 			path = ScreenCapture;
@@ -146,6 +167,10 @@
 				8F307B2D112D4F8BBBAB9D08 /* ContactListView.swift */,
 				58A9BB7C95C94E2B8FE225BA /* IncomingRingView.swift */,
 				3279ABDD1AB643299CD9E312 /* SessionView.swift */,
+				AA000001000000000000RC01 /* RemoteCursorOverlayWindow.swift */,
+				BB001122334455667788CCDD /* ExcludedAppsView.swift */,
+				TA000001000000000000TA01 /* TrustApprovalView.swift */,
+				TV000001000000000000TV01 /* TrustedDevicesView.swift */,
 			);
 			path = UI;
 			sourceTree = "<group>";
@@ -160,14 +185,32 @@
 			path = Resources;
 			sourceTree = "<group>";
 		};
+		AA000001000000000000CG01 /* Control */ = {
+			isa = PBXGroup;
+			children = (
+				AA000001000000000000CE01 /* ControlEvent.swift */,
+				AA000001000000000000CC01 /* ControlChannel.swift */,
+			);
+			path = Control;
+			sourceTree = "<group>";
+		};
 		F01398F7F7AB4262B0EA895F /* Media */ = {
 			isa = PBXGroup;
 			children = (
 				4D0C9EB3C8C94704A329116A /* ScreenCapture */,
 				557A5F3421C54ED28B2331F2 /* VideoCodec */,
 				30A24EF3490F4C22935E524A /* Session */,
+				AA000001000000000000CG01 /* Control */,
 			);
 			path = Media;
+			sourceTree = "<group>";
+		};
+		TD000001000000000000TG01 /* Trusted */ = {
+			isa = PBXGroup;
+			children = (
+				TD000001000000000000TD01 /* TrustedDeviceStore.swift */,
+			);
+			path = Trusted;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -250,12 +293,21 @@
 				C944A87C8DE1408E8F5D36CB /* IncomingRingView.swift in Sources */,
 				421B2EA16DE54375965AFF5E /* SessionView.swift in Sources */,
 				BE5646B78B474DD684E88F66 /* ScreenCaptureManager.swift in Sources */,
+				A1B2C3D4E5F600001234ABCD /* ScreenCapturePermission.swift in Sources */,
 				EED27FA274CF4FC791B19C1D /* VideoDisplayView.swift in Sources */,
 				103827966BCE4D06AD46A70B /* H264Encoder.swift in Sources */,
 				FA5923B5E4734CC296815432 /* H264Decoder.swift in Sources */,
 				9529965AADC6492BB3AF761C /* RTPPacketizer.swift in Sources */,
+				AA000001000000000000CE02 /* ControlEvent.swift in Sources */,
+				AA000001000000000000CC02 /* ControlChannel.swift in Sources */,
+				AA000001000000000000RC02 /* RemoteCursorOverlayWindow.swift in Sources */,
 				4354AC46F5C14300BE8D03B6 /* MediaSession.swift in Sources */,
+				AA001122334455667788AABB /* ExcludedAppsStore.swift in Sources */,
+				BB001122334455667788AABB /* ExcludedAppsView.swift in Sources */,
 				1E1FFE6FDE6B44999EA9FACC /* VideoShaders.metal in Sources */,
+				TD000001000000000000TD02 /* TrustedDeviceStore.swift in Sources */,
+				TA000001000000000000TA02 /* TrustApprovalView.swift in Sources */,
+				TV000001000000000000TV02 /* TrustedDevicesView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

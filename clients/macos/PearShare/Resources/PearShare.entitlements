@@ -10,10 +10,6 @@
 	<key>com.apple.security.screen-capture</key>
 	<true/>
 
-	<!-- Microphone access -->
-	<key>com.apple.security.device.microphone</key>
-	<true/>
-
 	<!-- Network: outbound (Tailscale connections, UDP beacons) -->
 	<key>com.apple.security.network.client</key>
 	<true/>

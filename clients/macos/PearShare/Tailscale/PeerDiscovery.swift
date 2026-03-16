@@ -9,6 +9,7 @@ final class PeerStore: ObservableObject {
     @Published var peers: [PearPeer] = []
     @Published var tailscaleOnline: Bool = false
     @Published var selfHostName: String = ""
+    @Published var selfIP: String? = nil  // our own Tailscale IP, set by PeerDiscovery
 
     func upsert(_ peer: PearPeer) {
         if let idx = peers.firstIndex(where: { $0.id == peer.id }) {
@@ -61,13 +62,16 @@ final class PeerDiscovery {
         beaconSendTimer?.invalidate()
     }
 
-    // MARK: - Tailscale Polling
+    // MARK: - Tailscale Polling (exponential backoff: 1s → 2s → 4s → 8s → 10s max)
 
     private func startPolling() {
         pollTask = Task {
+            var interval: Double = 1.0
+            let maxInterval: Double = 10.0
             while !Task.isCancelled {
                 await pollTailscale()
-                try? await Task.sleep(for: .seconds(10))
+                try? await Task.sleep(for: .seconds(interval))
+                interval = min(interval * 2, maxInterval)
             }
         }
     }
@@ -78,20 +82,27 @@ final class PeerDiscovery {
             await MainActor.run {
                 peerStore.tailscaleOnline = true
                 peerStore.selfHostName = status.selfNode.hostName
+                // Store our own primary Tailscale IP so callers can identify themselves in messages
+                peerStore.selfIP = status.selfNode.tailscaleIPs?.first(where: { $0.hasPrefix("100.") })
             }
 
-            // Update our map of online Tailscale peers
             var updated: [String: TailscalePeer] = [:]
             for (_, peer) in status.peer ?? [:] {
                 guard let ip = peer.primaryIP, peer.online == true else { continue }
                 updated[ip] = peer
             }
+
+            // Detect newly appeared peers — blast a beacon at them immediately
+            let newIPs = Set(updated.keys).subtracting(Set(tailscaleOnlinePeers.keys))
             tailscaleOnlinePeers = updated
 
-            // Prune PearPeers that are no longer online in Tailscale
             let onlineIPs = Set(updated.keys)
             await MainActor.run {
                 peerStore.peers.removeAll { !onlineIPs.contains($0.tailscaleIP) }
+            }
+
+            if !newIPs.isEmpty {
+                sendBeacon(toIPs: newIPs)
             }
         } catch {
             await MainActor.run { peerStore.tailscaleOnline = false }
@@ -168,12 +179,13 @@ final class PeerDiscovery {
 
     private func startBeaconSender() {
         beaconSendTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
-            self?.sendBeacon()
+            self?.sendBeacon(toIPs: nil)
         }
         beaconSendTimer?.fire()
     }
 
-    private func sendBeacon() {
+    /// Send a beacon to specific IPs, or all known online peers if nil.
+    private func sendBeacon(toIPs: Set<String>? = nil) {
         let beacon = PresenceBeacon(
             v: 1,
             type: "presence",
@@ -184,8 +196,8 @@ final class PeerDiscovery {
         )
         guard let data = try? JSONEncoder().encode(beacon) else { return }
 
-        // Send to all currently known Tailscale online peers
-        for (ip, _) in tailscaleOnlinePeers {
+        let targets = toIPs ?? Set(tailscaleOnlinePeers.keys)
+        for ip in targets {
             sendUDP(data: data, toIP: ip, port: beaconPort)
         }
     }
