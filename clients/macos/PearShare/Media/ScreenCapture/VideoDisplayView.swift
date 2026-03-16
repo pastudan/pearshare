@@ -17,6 +17,10 @@ struct VideoDisplayView: NSViewRepresentable {
         view.enableSetNeedsDisplay = false
         view.preferredFramesPerSecond = 60
         view.colorPixelFormat = .bgra8Unorm
+        // Opt into Retina rendering. Without this macOS renders the Metal drawable at 1× even
+        // on a 2× display, then upscales it — halving sharpness. With it the drawable matches
+        // the window's physical pixel count and we get crisp 1:1 rendering.
+        view.wantsBestResolutionOpenGLSurface = true
         renderer.view = view
         return view
     }
@@ -42,6 +46,7 @@ final class VideoRenderer: NSObject, MTKViewDelegate {
     private var textureCache: CVMetalTextureCache?
     private var currentPixelBuffer: CVPixelBuffer?
     private let bufferLock = NSLock()
+    private var hasLoggedFirstDraw = false
 
     // MARK: - Init
 
@@ -74,10 +79,10 @@ final class VideoRenderer: NSObject, MTKViewDelegate {
 
     func enqueue(pixelBuffer: CVPixelBuffer) {
         if sourceDimensions == nil {
-            sourceDimensions = CGSize(
-                width:  CVPixelBufferGetWidth(pixelBuffer),
-                height: CVPixelBufferGetHeight(pixelBuffer)
-            )
+            let w = CVPixelBufferGetWidth(pixelBuffer)
+            let h = CVPixelBufferGetHeight(pixelBuffer)
+            sourceDimensions = CGSize(width: w, height: h)
+            tapLog("[VIEWER-1] First decoded pixel buffer: \(w)×\(h) px")
         }
         bufferLock.lock()
         currentPixelBuffer = pixelBuffer
@@ -86,7 +91,9 @@ final class VideoRenderer: NSObject, MTKViewDelegate {
 
     // MARK: - MTKViewDelegate
 
-    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
+        tapLog("[VIEWER-2] MTKView drawableSize → \(Int(size.width))×\(Int(size.height)) px  |  viewBounds=\(Int(view.bounds.width))×\(Int(view.bounds.height)) pts  |  contentsScale=\(view.layer?.contentsScale ?? -1)")
+    }
 
     func draw(in view: MTKView) {
         bufferLock.lock()
@@ -105,6 +112,12 @@ final class VideoRenderer: NSObject, MTKViewDelegate {
         // Create Metal textures from the CVPixelBuffer planes (zero-copy via IOSurface)
         let width  = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
+
+        if !hasLoggedFirstDraw {
+            hasLoggedFirstDraw = true
+            let ds = view.drawableSize
+            tapLog("[VIEWER-3] First draw: pixelBuffer=\(width)×\(height)  |  drawable=\(Int(ds.width))×\(Int(ds.height))  |  viewBounds=\(Int(view.bounds.width))×\(Int(view.bounds.height)) pts  |  wantsBestRes=\(view.wantsBestResolutionOpenGLSurface)")
+        }
 
         guard let yTexture  = makeTexture(from: pixelBuffer, cache: cache, planeIndex: 0, format: .r8Unorm,   width: width,    height: height),
               let uvTexture = makeTexture(from: pixelBuffer, cache: cache, planeIndex: 1, format: .rg8Unorm, width: width / 2, height: height / 2) else {

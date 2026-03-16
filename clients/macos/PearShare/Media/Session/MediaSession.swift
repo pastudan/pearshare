@@ -2,10 +2,27 @@ import Foundation
 import Network
 import CoreMedia
 import CoreVideo
+import CoreGraphics
 import ScreenCaptureKit
 import OSLog
 
 private let logger = Logger(subsystem: "com.pearshare.app", category: "MediaSession")
+
+// MARK: - Shared tap log (tail -f /tmp/pearshare-tap.log)
+// Internal (module-visible) so every file in the target can call tapLog() without re-defining it.
+func tapLog(_ msg: String) {
+    let line = "\(Date()) \(msg)\n"
+    guard let data = line.data(using: .utf8) else { return }
+    let path = "/tmp/pearshare-tap.log"
+    if FileManager.default.fileExists(atPath: path),
+       let fh = FileHandle(forWritingAtPath: path) {
+        fh.seekToEndOfFile()
+        fh.write(data)
+        fh.closeFile()
+    } else {
+        try? data.write(to: URL(fileURLWithPath: path))
+    }
+}
 
 // MARK: - Session Role
 
@@ -18,8 +35,8 @@ enum SessionRole {
 
 /// Owns the full media pipeline for one active PearShare session.
 ///
-/// Host path:   ScreenCaptureKit → H264Encoder → RTPPacketizer → UDP socket
-/// Viewer path: UDP socket → RTPDepacketizer → H264Decoder → VideoRenderer → MTKView
+/// Host path:   ScreenCaptureKit → VideoEncoder (HEVC) → RTPPacketizer → UDP socket
+/// Viewer path: UDP socket → RTPDepacketizer → VideoDecoder (HEVC) → VideoRenderer → MTKView
 @MainActor
 final class MediaSession: NSObject {
 
@@ -30,13 +47,14 @@ final class MediaSession: NSObject {
     private var captureManager: ScreenCaptureManager?
     // Exposed so AppDelegate can attach cursor/activity callbacks after start()
     private(set) var controlChannel: ControlChannel?
-    nonisolated(unsafe) private var decoder: H264Decoder?
+    nonisolated(unsafe) private var decoder: VideoDecoder?
     nonisolated(unsafe) private var depacketizer: RTPDepacketizer?
     private var videoRecvListener: NWListener?
 
     // These are accessed from nonisolated callbacks on the hot path — stored as nonisolated
     // references so we don't pay the MainActor hop for every encoded frame.
-    nonisolated(unsafe) private var encoder: H264Encoder?
+    nonisolated(unsafe) private var encoder: VideoEncoder?
+    nonisolated(unsafe) private var hasLoggedFirstSCKFrame = false
     nonisolated(unsafe) private var packetizer: RTPPacketizer?
     nonisolated(unsafe) private var videoSendConnection: NWConnection?
 
@@ -74,13 +92,22 @@ final class MediaSession: NSObject {
         guard let display = content.displays.first else {
             throw MediaSessionError.noDisplayAvailable
         }
-        logger.info("Host: display \(display.width)x\(display.height), sending to \(self.descriptor.peerIP):\(self.descriptor.videoPort)")
 
-        let enc = H264Encoder()
+        // Physical pixel dimensions — SCDisplay.width/height are logical points, which gives
+        // half-resolution on Retina displays. CoreGraphics returns the true pixel count.
+        let physW = CGDisplayPixelsWide(display.displayID)
+        let physH = CGDisplayPixelsHigh(display.displayID)
+        let captureWidth  = physW > 0 ? physW : display.width
+        let captureHeight = physH > 0 ? physH : display.height
+        logger.info("Host: display \(captureWidth)×\(captureHeight) px (SCDisplay: \(display.width)×\(display.height) pts)")
+        tapLog("[HOST-1] SCDisplay logical=\(display.width)×\(display.height) pts  |  CGDisplay physical=\(physW)×\(physH) px  |  displayID=\(display.displayID)")
+
+        let enc = VideoEncoder()
         enc.delegate = self
-        enc.frameRate = 30
-        try enc.prepare(width: display.width, height: display.height)
+        enc.frameRate = 15
+        try enc.prepare(width: captureWidth, height: captureHeight)
         self.encoder = enc
+        tapLog("[HOST-2] Encoder prepared: \(captureWidth)×\(captureHeight) px  |  fps=\(enc.frameRate)  |  bitrate=\(enc.targetBitrate/1_000_000) Mbps")
         logger.info("Host: encoder ready")
 
         self.packetizer = RTPPacketizer(streamID: kPearStreamVideo)
@@ -104,7 +131,7 @@ final class MediaSession: NSObject {
 
         let capture = ScreenCaptureManager()
         capture.delegate = self
-        capture.framesPerSecond = 30
+        capture.framesPerSecond = 15
         capture.excludedBundleIDs = ExcludedAppsStore.shared.enabledBundleIDs
         capture.excludedWindowTitles = overlayWindowTitles
         try await capture.startCapture(display: display)
@@ -129,7 +156,7 @@ final class MediaSession: NSObject {
         }
         self.depacketizer = depkt
 
-        let dec = H264Decoder()
+        let dec = VideoDecoder()
         dec.delegate = self
         self.decoder = dec
 
@@ -200,6 +227,12 @@ final class MediaSession: NSObject {
 
 extension MediaSession: ScreenCaptureManagerDelegate {
     nonisolated func screenCaptureManager(_ manager: ScreenCaptureManager, didOutputSampleBuffer sampleBuffer: CMSampleBuffer) {
+        if !hasLoggedFirstSCKFrame, let pb = CMSampleBufferGetImageBuffer(sampleBuffer) {
+            hasLoggedFirstSCKFrame = true
+            let w = CVPixelBufferGetWidth(pb)
+            let h = CVPixelBufferGetHeight(pb)
+            tapLog("[HOST-3] First SCK pixel buffer delivered: \(w)×\(h) px  (requested config.width/height above)")
+        }
         encoder?.encode(sampleBuffer: sampleBuffer)
     }
 
@@ -208,10 +241,10 @@ extension MediaSession: ScreenCaptureManagerDelegate {
     }
 }
 
-// MARK: - H264EncoderDelegate (host)
+// MARK: - VideoEncoderDelegate (host)
 
-extension MediaSession: H264EncoderDelegate {
-    nonisolated func h264Encoder(_ encoder: H264Encoder, didEncodeNALUnit data: Data, isKeyframe: Bool, presentationTimestamp: CMTime) {
+extension MediaSession: VideoEncoderDelegate {
+    nonisolated func videoEncoder(_ encoder: VideoEncoder, didEncodeNALUnit data: Data, isKeyframe: Bool, presentationTimestamp: CMTime) {
         guard let pktz = packetizer,
               let conn = videoSendConnection else { return }
 
@@ -223,10 +256,10 @@ extension MediaSession: H264EncoderDelegate {
     }
 }
 
-// MARK: - H264DecoderDelegate (viewer)
+// MARK: - VideoDecoderDelegate (viewer)
 
-extension MediaSession: H264DecoderDelegate {
-    nonisolated func h264Decoder(_ decoder: H264Decoder, didDecodeFrame pixelBuffer: CVPixelBuffer, presentationTimestamp: CMTime) {
+extension MediaSession: VideoDecoderDelegate {
+    nonisolated func videoDecoder(_ decoder: VideoDecoder, didDecodeFrame pixelBuffer: CVPixelBuffer, presentationTimestamp: CMTime) {
         logger.info("Viewer: decoded frame, enqueueing to renderer")
         Task { @MainActor in
             renderer?.enqueue(pixelBuffer: pixelBuffer)

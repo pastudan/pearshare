@@ -149,17 +149,25 @@ final class ScreenCaptureManager: NSObject {
     private func startStream(with filter: SCContentFilter) async throws {
         let config = SCStreamConfiguration()
 
-        // Resolution: capture at display's native resolution, scale down for performance
-        if #available(macOS 14.0, *) {
-            config.width = Int(filter.contentRect.width) > 0
-                ? min(Int(filter.contentRect.width), 2560)
-                : 1920
-            config.height = Int(filter.contentRect.height) > 0
-                ? min(Int(filter.contentRect.height), 1600)
-                : 1080
+        // Use physical pixel dimensions via CoreGraphics — SCDisplay.width/height and
+        // filter.contentRect are in logical points, which gives half-resolution output
+        // on Retina (2×) displays. CGDisplayPixelsWide/High return the true pixel count.
+        if let display = targetDisplay {
+            let physW = CGDisplayPixelsWide(display.displayID)
+            let physH = CGDisplayPixelsHigh(display.displayID)
+            config.width  = physW > 0 ? physW : 2560
+            config.height = physH > 0 ? physH : 1600
+            let rectDesc: String
+            if #available(macOS 14.0, *) {
+                rectDesc = "\(Int(filter.contentRect.width))×\(Int(filter.contentRect.height)) pts"
+            } else {
+                rectDesc = "n/a (<macOS14)"
+            }
+            tapLog("[HOST-2b] SCStreamConfig: width=\(config.width) height=\(config.height)  |  CGDisplay=\(physW)×\(physH)  |  contentRect=\(rectDesc)")
         } else {
-            config.width = 1920
-            config.height = 1080
+            config.width  = 2560
+            config.height = 1600
+            tapLog("[HOST-2b] SCStreamConfig fallback (no targetDisplay): \(config.width)×\(config.height)")
         }
 
         config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(framesPerSecond))

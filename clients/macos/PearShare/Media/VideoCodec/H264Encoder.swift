@@ -5,21 +5,26 @@ import CoreVideo
 
 // MARK: - Delegate
 
-protocol H264EncoderDelegate: AnyObject {
+protocol VideoEncoderDelegate: AnyObject {
     /// Called for each encoded NAL unit (Annex B format, starts with 0x00 0x00 0x00 0x01).
-    func h264Encoder(_ encoder: H264Encoder, didEncodeNALUnit data: Data, isKeyframe: Bool, presentationTimestamp: CMTime)
+    func videoEncoder(_ encoder: VideoEncoder, didEncodeNALUnit data: Data, isKeyframe: Bool, presentationTimestamp: CMTime)
 }
 
-// MARK: - H264Encoder
+// MARK: - VideoEncoder
 
-/// Wraps VideoToolbox VTCompressionSession to encode CVPixelBuffers into H.264 NAL units.
-/// Uses hardware acceleration when available (always on Apple Silicon, usually on Intel).
-final class H264Encoder {
+/// Wraps VideoToolbox VTCompressionSession to encode CVPixelBuffers into HEVC (H.265) NAL units.
+/// Uses hardware acceleration on all Apple Silicon Macs.
+///
+/// Tuned for productivity screen sharing:
+///   - 15 fps — enough for document/IDE work; means more bits available per frame
+///   - 8 Mbps HEVC ≈ 16+ Mbps H.264 in perceived quality
+///   - Real-time mode kept on so encoding latency stays low for interactive remote control
+final class VideoEncoder {
 
-    weak var delegate: H264EncoderDelegate?
+    weak var delegate: VideoEncoderDelegate?
 
-    var targetBitrate: Int = 4_000_000  // bps, adjustable
-    var frameRate: Double = 30
+    var targetBitrate: Int = 8_000_000  // 8 Mbps; HEVC is ~2× more efficient than H.264
+    var frameRate: Double = 15          // fps; optimal for productivity screen sharing
 
     private var session: VTCompressionSession?
     private var frameCount: Int64 = 0
@@ -33,44 +38,43 @@ final class H264Encoder {
             allocator: nil,
             width: Int32(width),
             height: Int32(height),
-            codecType: kCMVideoCodecType_H264,
+            codecType: kCMVideoCodecType_HEVC,
             encoderSpecification: nil,
             imageBufferAttributes: nil,
             compressedDataAllocator: nil,
-            outputCallback: nil,       // we use the async block API below
+            outputCallback: nil,
             refcon: nil,
             compressionSessionOut: &session
         )
         guard status == noErr, let session else {
-            throw H264Error.sessionCreationFailed(status)
+            throw VideoCodecError.sessionCreationFailed(status)
         }
         self.session = session
-
         try configureSession(session)
         try VTCompressionSessionPrepareToEncodeFrames(session).throwIfNotNoErr()
     }
 
     private func configureSession(_ session: VTCompressionSession) throws {
-        // Real-time encoding — no buffering, no lookahead
-        try VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue).throwIfNotNoErr()
+        // Real-time keeps encoding latency low — important for interactive remote control
+        try VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime,
+                                 value: kCFBooleanTrue).throwIfNotNoErr()
 
-        // No B-frames — forward-only for minimum latency
-        try VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse).throwIfNotNoErr()
+        // No B-frames: forward-only to avoid decoder reordering latency
+        try VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering,
+                                 value: kCFBooleanFalse).throwIfNotNoErr()
 
-        // High profile for best quality/compression, auto level
+        // HEVC Main profile — 8-bit, hardware-accelerated on all Apple Silicon
         try VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ProfileLevel,
-                                 value: kVTProfileLevel_H264_High_AutoLevel).throwIfNotNoErr()
+                                 value: kVTProfileLevel_HEVC_Main_AutoLevel).throwIfNotNoErr()
 
-        // Bitrate
         try VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate,
                                  value: targetBitrate as CFNumber).throwIfNotNoErr()
 
-        // Keyframe every 2 seconds
-        let keyframeInterval = Int(frameRate * 2) as CFNumber
+        // Longer GOP at low FPS: keyframe every 4 seconds improves inter-frame compression
+        let keyframeInterval = Int(frameRate * 4) as CFNumber
         try VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval,
                                  value: keyframeInterval).throwIfNotNoErr()
 
-        // H.264 Annex B output (start codes) — easier to packetize than AVCC
         try VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowTemporalCompression,
                                  value: kCFBooleanTrue).throwIfNotNoErr()
     }
@@ -85,12 +89,10 @@ final class H264Encoder {
         let duration = CMTime(value: 1, timescale: CMTimeScale(frameRate))
         frameCount += 1
 
-        // Force keyframe every 2s (backup in case VTSession doesn't)
+        // Force keyframe every 4 seconds as a belt-and-suspenders guarantee
         var frameProperties: CFDictionary? = nil
-        if frameCount % Int64(frameRate * 2) == 1 {
-            frameProperties = [
-                kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue
-            ] as CFDictionary
+        if frameCount % Int64(frameRate * 4) == 1 {
+            frameProperties = [kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue] as CFDictionary
         }
 
         VTCompressionSessionEncodeFrame(
@@ -100,9 +102,9 @@ final class H264Encoder {
             duration: duration,
             frameProperties: frameProperties,
             infoFlagsOut: nil
-        ) { [weak self] status, flags, sampleBuffer in
+        ) { [weak self] status, _, sampleBuffer in
             guard let self, status == noErr, let sampleBuffer else { return }
-            self.handleEncodedSample(sampleBuffer, flags: flags)
+            self.handleEncodedSample(sampleBuffer)
         }
     }
 
@@ -112,15 +114,13 @@ final class H264Encoder {
     }
 
     func invalidate() {
-        if let session {
-            VTCompressionSessionInvalidate(session)
-            self.session = nil
-        }
+        if let session { VTCompressionSessionInvalidate(session) }
+        session = nil
     }
 
     // MARK: - Output processing
 
-    private func handleEncodedSample(_ sampleBuffer: CMSampleBuffer, flags: VTEncodeInfoFlags) {
+    private func handleEncodedSample(_ sampleBuffer: CMSampleBuffer) {
         guard let dataBuffer = sampleBuffer.dataBuffer else { return }
 
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
@@ -143,8 +143,7 @@ final class H264Encoder {
 
         var annexB = Data()
 
-        // On keyframes, prepend SPS + PPS from the format description so the
-        // decoder always has parameter sets before the IDR slice.
+        // On keyframes, prepend VPS + SPS + PPS so the decoder can always initialise
         if isKeyframe, let fmt = sampleBuffer.formatDescription {
             annexB.append(Self.extractParameterSets(from: fmt))
         }
@@ -152,23 +151,23 @@ final class H264Encoder {
         annexB.append(Self.avccToAnnexB(avccData))
         guard !annexB.isEmpty else { return }
 
-        delegate?.h264Encoder(self, didEncodeNALUnit: annexB, isKeyframe: isKeyframe, presentationTimestamp: pts)
+        delegate?.videoEncoder(self, didEncodeNALUnit: annexB, isKeyframe: isKeyframe, presentationTimestamp: pts)
     }
 
-    // MARK: - Extract SPS/PPS from format description
+    // MARK: - Extract VPS/SPS/PPS from HEVC format description
 
-    /// Returns SPS and PPS as Annex B NAL units (each prefixed with 0x00 0x00 0x00 0x01).
     private static func extractParameterSets(from fmt: CMVideoFormatDescription) -> Data {
         var result = Data()
         var count = 0
-        CMVideoFormatDescriptionGetH264ParameterSetAtIndex(fmt, parameterSetIndex: 0,
+        CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(
+            fmt, parameterSetIndex: 0,
             parameterSetPointerOut: nil, parameterSetSizeOut: nil,
             parameterSetCountOut: &count, nalUnitHeaderLengthOut: nil)
 
         for i in 0 ..< count {
             var ptr: UnsafePointer<UInt8>?
             var size = 0
-            let status = CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
+            let status = CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(
                 fmt, parameterSetIndex: i,
                 parameterSetPointerOut: &ptr,
                 parameterSetSizeOut: &size,
@@ -182,10 +181,8 @@ final class H264Encoder {
         return result
     }
 
-    // MARK: - AVCC → Annex B conversion
+    // MARK: - AVCC → Annex B (identical framing to H.264)
 
-    /// VideoToolbox produces AVCC-style NAL units (4-byte big-endian length prefix).
-    /// We convert to Annex B (0x00 0x00 0x00 0x01 start code) for easier framing.
     static func avccToAnnexB(_ avcc: Data) -> Data {
         var result = Data()
         result.reserveCapacity(avcc.count + 16)
@@ -194,31 +191,28 @@ final class H264Encoder {
         avcc.withUnsafeBytes { ptr in
             let base = ptr.baseAddress!
             while offset + 4 <= ptr.count {
-                // loadUnaligned avoids the alignment trap that raw.load() requires
                 let nalLength = Int(UInt32(bigEndian: (base + offset).loadUnaligned(as: UInt32.self)))
                 offset += 4
                 guard nalLength > 0, offset + nalLength <= ptr.count else { break }
-
                 result.append(contentsOf: [0x00, 0x00, 0x00, 0x01])
                 result.append(avcc[offset ..< offset + nalLength])
                 offset += nalLength
             }
         }
-
         return result
     }
 }
 
 // MARK: - Error
 
-enum H264Error: LocalizedError {
+enum VideoCodecError: LocalizedError {
     case sessionCreationFailed(OSStatus)
     case encodingFailed(OSStatus)
 
     var errorDescription: String? {
         switch self {
         case .sessionCreationFailed(let s): return "VTCompressionSession creation failed: \(s)"
-        case .encodingFailed(let s):        return "H.264 encoding failed: \(s)"
+        case .encodingFailed(let s):        return "Video codec error: \(s)"
         }
     }
 }
@@ -227,6 +221,6 @@ enum H264Error: LocalizedError {
 
 extension OSStatus {
     func throwIfNotNoErr() throws {
-        guard self == noErr else { throw H264Error.encodingFailed(self) }
+        guard self == noErr else { throw VideoCodecError.encodingFailed(self) }
     }
 }

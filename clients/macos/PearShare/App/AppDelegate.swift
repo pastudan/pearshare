@@ -378,6 +378,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentAspectRatio = finalSize
         repositionControlPill()
         log.info("AppDelegate: viewer window sized to \(finalSize.width)×\(finalSize.height) (source \(sourceDimensions.width)×\(sourceDimensions.height) @\(scale)x, 1:1=\(fitsAt1x))")
+        tapLog("[VIEWER-4] Window sizing: source=\(Int(sourceDimensions.width))×\(Int(sourceDimensions.height)) px  |  backingScale=\(scale)x  |  sourceInPts=\(Int(sourcePoints.width))×\(Int(sourcePoints.height))  |  screenAvail=\(Int(available.width))×\(Int(available.height)) pts  |  fits1:1=\(fitsAt1x)  |  finalWindow=\(Int(finalSize.width))×\(Int(finalSize.height)) pts")
     }
 
     // MARK: - Control pill positioning

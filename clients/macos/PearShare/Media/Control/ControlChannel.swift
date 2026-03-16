@@ -393,6 +393,11 @@ final class ControlChannel {
         logger.info("ControlChannel host: control → \(newController.rawValue)")
 
         if newController == .viewer {
+            // CGAssociateMouseAndMouseCursorPosition(false) requires the calling process to be
+            // the active (frontmost) application. NSApp.activate is synchronous — it makes us
+            // active before the next line runs, so the CGAssociate call in suppressionTap.enable()
+            // takes effect. The association setting persists even after we lose focus again.
+            NSApp.activate(ignoringOtherApps: true)
             suppressionTap.enable(initialPosition: hostPosition)
         } else {
             // Warp the system cursor to the host's tracked position so the host
