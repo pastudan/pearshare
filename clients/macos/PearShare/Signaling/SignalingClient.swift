@@ -29,6 +29,12 @@ final class SignalingClient {
 
     /// Called on the main actor when the remote side accepts the ring.
     @MainActor var onAccepted: ((SessionDescriptor) -> Void)?
+    /// Called on the main actor once the ring message has been sent and we are waiting for a response.
+    @MainActor var onRinging: (() -> Void)?
+    /// Called on the main actor when the ring ends without a session (declined / busy / timeout / error).
+    @MainActor var onFailed: ((String) -> Void)?
+
+    private var isCancelled = false
 
     // Outbound: create a fresh connection
     init(peer: PearPeer, peerStore: PeerStore?) {
@@ -44,23 +50,36 @@ final class SignalingClient {
 
     // MARK: - Outbound call
 
-    /// Dials the peer and sends RING. Delivers outcome via `onAccepted` callback or logs other outcomes.
+    /// Dials the peer and sends RING. Delivers outcome via `onAccepted` / `onFailed` callbacks.
     func ring() {
         Task {
             let outcome = await dial()
+            if isCancelled { return }
             switch outcome {
             case .accepted(let session):
                 await MainActor.run { self.onAccepted?(session) }
             case .rejected(let reason):
                 logger.info("SignalingClient: call rejected: \(reason)")
+                await MainActor.run { self.onFailed?("Declined") }
             case .busy:
                 logger.info("SignalingClient: peer is busy")
+                await MainActor.run { self.onFailed?("Busy") }
             case .timeout:
                 logger.info("SignalingClient: ring timed out")
+                await MainActor.run { self.onFailed?("No answer") }
             case .error(let e):
                 logger.error("SignalingClient: ring error: \(e)")
+                await MainActor.run { self.onFailed?("Connection failed") }
             }
         }
+    }
+
+    /// Cancel an in-progress outgoing ring.
+    func cancel() {
+        isCancelled = true
+        connection?.cancel()
+        ringContinuation?.resume(returning: .rejected(reason: "cancelled"))
+        ringContinuation = nil
     }
 
     private func dial() async -> RingOutcome {
@@ -79,6 +98,7 @@ final class SignalingClient {
                 switch state {
                 case .ready:
                     self.sendRing()
+                    Task { @MainActor in self.onRinging?() }
                     self.listenForResponse()
                 case .failed(let error):
                     self.ringContinuation?.resume(returning: .error(error))

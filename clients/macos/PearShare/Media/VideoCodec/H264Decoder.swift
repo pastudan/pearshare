@@ -127,12 +127,18 @@ final class VideoDecoder {
             kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
             kCVPixelBufferMetalCompatibilityKey: true,
         ]
+        // Explicitly request the hardware HEVC decoder. Without this hint VideoToolbox may
+        // fall back to a software decoder on some configurations, which is 3–5× slower to
+        // initialise and decode — directly impacting first-frame latency.
+        let spec: [NSString: Any] = [
+            kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder: true,
+        ]
 
         var session: VTDecompressionSession?
         let status = VTDecompressionSessionCreate(
             allocator: nil,
             formatDescription: formatDescription,
-            decoderSpecification: nil,
+            decoderSpecification: spec as CFDictionary,
             imageBufferAttributes: attrs as CFDictionary,
             outputCallback: nil,
             decompressionSessionOut: &session

@@ -115,14 +115,25 @@ final class SignalingServer {
             publicKey: nil
         )
         let client = SignalingClient(existingConnection: connection, peer: peer)
+        let intent = ring.intent
 
-        // Pubkey-based auto-answer: we have caller's pubkey in our trusted list and they proved identity
-        if let nonceB64 = ring.nonce,
-           let sigB64 = ring.signature,
-           let nonce = Data(base64Encoded: nonceB64),
-           let signature = Data(base64Encoded: sigB64),
-           TrustedDeviceStore.shared.verify(signature: signature, nonce: nonce, for: senderIP) {
-            logger.info("SignalingServer: auto-accepting ring from trusted caller \(senderIP)")
+        // "share" intent: the caller is offering to show us their screen.
+        // Only auto-accept if the user has opted into that behaviour via the menu-bar toggle.
+        let isShareOffer = (intent == "share")
+            && UserDefaults.standard.bool(forKey: PearSettings.autoAcceptSharesKey)
+
+        // Pubkey-based auto-answer: caller proved identity against our trusted-device list.
+        let isTrusted: Bool = {
+            guard let nonceB64 = ring.nonce,
+                  let sigB64 = ring.signature,
+                  let nonce = Data(base64Encoded: nonceB64),
+                  let signature = Data(base64Encoded: sigB64)
+            else { return false }
+            return TrustedDeviceStore.shared.verify(signature: signature, nonce: nonce, for: senderIP)
+        }()
+
+        if isShareOffer || isTrusted {
+            logger.info("SignalingServer: auto-accepting ring from \(senderIP) intent=\(intent) (shareOffer=\(isShareOffer) trusted=\(isTrusted))")
             let sessionId = client.accept()
             let descriptor = SessionDescriptor(
                 sessionId: sessionId,
@@ -131,13 +142,12 @@ final class SignalingServer {
                 audioPort: 5536,
                 controlPort: 5537
             )
-            let intent = ring.intent
             Task { @MainActor in
                 self.delegate?.signalingServer(self, autoAcceptedRingFrom: peer, descriptor: descriptor, intent: intent)
             }
         } else {
             Task { @MainActor in
-                self.delegate?.signalingServer(self, receivedRingFrom: peer, client: client, intent: ring.intent)
+                self.delegate?.signalingServer(self, receivedRingFrom: peer, client: client, intent: intent)
             }
         }
     }

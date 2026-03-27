@@ -8,9 +8,9 @@ import AppKit
 /// AppDelegate keeps it repositioned on window move/resize.
 final class ViewerControlPillPanel: NSPanel {
 
-    static func make(onHangup: @escaping () -> Void) -> ViewerControlPillPanel {
+    static func make(debugInfo: SessionDebugInfo, onHangup: @escaping () -> Void) -> ViewerControlPillPanel {
         let p = ViewerControlPillPanel()
-        let view = ViewerControlPillView(onHangup: onHangup)
+        let view = ViewerControlPillView(debugInfo: debugInfo, onHangup: onHangup)
         let hosting = NSHostingView(rootView: view)
         hosting.wantsLayer = true
         p.contentView = hosting
@@ -20,12 +20,12 @@ final class ViewerControlPillPanel: NSPanel {
 
     private init() {
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 300, height: 40),
+            contentRect: NSRect(x: 0, y: 0, width: 340, height: 40),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
-        level = .floating
+        level = .normal
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
@@ -40,11 +40,13 @@ final class ViewerControlPillPanel: NSPanel {
 // MARK: - ViewerControlPillView
 
 struct ViewerControlPillView: View {
+    @ObservedObject var debugInfo: SessionDebugInfo
     let onHangup: () -> Void
 
     @State private var elapsed: TimeInterval = 0
     @State private var timer: Timer?
     @State private var isMuted = false
+    @State private var showDebug = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -67,6 +69,20 @@ struct ViewerControlPillView: View {
             }
             .buttonStyle(.plain)
 
+            Button {
+                showDebug.toggle()
+            } label: {
+                Image(systemName: "ant.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(showDebug ? .white : .black.opacity(0.5))
+                    .frame(width: 24, height: 24)
+                    .background(showDebug ? Color.black.opacity(0.35) : Color.black.opacity(0.09), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $showDebug, arrowEdge: .bottom) {
+                SessionDebugView(info: debugInfo)
+            }
+
             Button(action: onHangup) {
                 Image(systemName: "phone.down.fill")
                     .font(.system(size: 11, weight: .semibold))
@@ -77,7 +93,7 @@ struct ViewerControlPillView: View {
             .buttonStyle(PillButtonStyle())
         }
         .padding(.horizontal, 14)
-        .frame(width: 300, height: 40)
+        .frame(width: 340, height: 40)
         .background(
             Capsule()
                 .fill(Color.pearGreen)

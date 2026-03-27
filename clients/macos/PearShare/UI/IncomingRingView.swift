@@ -46,7 +46,7 @@ struct IncomingRingView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "eye.fill")
                         .font(.caption)
-                    Text("Accepting will share your entire screen and give them keyboard & mouse access.")
+                    Text("Accepting will share your entire screen. You can optionally grant keyboard & mouse control from the session banner.")
                         .font(.caption)
                         .fixedSize(horizontal: false, vertical: true)
                 }

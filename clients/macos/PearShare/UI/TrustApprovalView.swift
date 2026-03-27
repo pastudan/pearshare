@@ -2,18 +2,11 @@ import SwiftUI
 import AppKit
 
 // MARK: - TrustApprovalView
-//
-// Stage 1: A sheet with a prominent red danger banner explaining exactly what trust
-//   grants — shown first so the user fully reads it before the hard confirm.
-// Stage 2: A blocking NSAlert with alertStyle = .critical and a destructive-worded
-//   button — the second gate before anything is actually stored or sent.
-//
-// Only if BOTH stages are confirmed is onConfirmed() called.
 
 struct TrustApprovalView: View {
 
     let peer: PearPeer
-    /// Called when the user passes both confirmation stages.
+    /// Called when the user confirms trust.
     let onConfirmed: () -> Void
     let onCancelled: () -> Void
 
@@ -96,11 +89,8 @@ struct TrustApprovalView: View {
                 Spacer()
 
                 Button {
-                    // Stage 2: NSAlert for the final hard confirmation
                     dismiss()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                        showFinalConfirmation()
-                    }
+                    onConfirmed()
                 } label: {
                     Label("I Understand, Continue", systemImage: "chevron.right")
                 }
@@ -114,33 +104,7 @@ struct TrustApprovalView: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
-    // MARK: - Stage 2: NSAlert
 
-    private func showFinalConfirmation() {
-        let alert = NSAlert()
-        alert.alertStyle = .critical
-        alert.messageText = "Allow \"\(peer.displayName)\" permanent access?"
-        alert.informativeText = """
-            \(peer.displayName) (\(peer.hostName)) will be able to connect to your Mac and take full control of your screen at any time, without warning.
-
-            This cannot be undone without manually revoking access from the Trusted Devices list.
-            """
-
-        // Destructive button first (becomes the default, highlighted red-ish)
-        alert.addButton(withTitle: "Allow Permanent Access")
-        alert.addButton(withTitle: "Cancel")
-
-        // Make the allow button explicitly non-default so Return doesn't accidentally confirm
-        alert.buttons[0].hasDestructiveAction = true
-        alert.buttons[1].keyEquivalent = "\r"  // Return = Cancel (safer default)
-
-        let response = alert.runModal()
-        if response == .alertFirstButtonReturn {
-            onConfirmed()
-        } else {
-            onCancelled()
-        }
-    }
 }
 
 // MARK: - TrustWarningRow

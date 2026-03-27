@@ -2,6 +2,7 @@ import Foundation
 import VideoToolbox
 import CoreMedia
 import CoreVideo
+import os
 
 // MARK: - Delegate
 
@@ -23,11 +24,20 @@ final class VideoEncoder {
 
     weak var delegate: VideoEncoderDelegate?
 
-    var targetBitrate: Int = 8_000_000  // 8 Mbps; HEVC is ~2× more efficient than H.264
-    var frameRate: Double = 15          // fps; optimal for productivity screen sharing
+    var frameRate: Double = 15  // fps; optimal for productivity screen sharing
 
     private var session: VTCompressionSession?
     private var frameCount: Int64 = 0
+
+    // Signalled from the control-channel receive queue; read on the SCKit frame queue.
+    // OSAllocatedUnfairLock is safe across threads and has zero contention in the normal path.
+    private let forceKeyframePending = OSAllocatedUnfairLock(initialState: false)
+
+    /// Ask the encoder to promote the very next frame to an IDR keyframe.
+    /// Thread-safe; may be called from any queue.
+    func forceNextKeyframe() {
+        forceKeyframePending.withLock { $0 = true }
+    }
 
     // MARK: - Setup
 
@@ -67,11 +77,11 @@ final class VideoEncoder {
         try VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ProfileLevel,
                                  value: kVTProfileLevel_HEVC_Main_AutoLevel).throwIfNotNoErr()
 
-        try VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate,
-                                 value: targetBitrate as CFNumber).throwIfNotNoErr()
+        // No bitrate cap — let VT's hardware HEVC encoder use as many bits as each frame
+        // needs. Over Tailscale the network is not the bottleneck; compression artifacts are.
 
-        // Longer GOP at low FPS: keyframe every 4 seconds improves inter-frame compression
-        let keyframeInterval = Int(frameRate * 4) as CFNumber
+        // Keyframe every 2 s: fast recovery if the viewer misses a keyframe over UDP
+        let keyframeInterval = Int(frameRate * 2) as CFNumber
         try VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval,
                                  value: keyframeInterval).throwIfNotNoErr()
 
@@ -89,9 +99,12 @@ final class VideoEncoder {
         let duration = CMTime(value: 1, timescale: CMTimeScale(frameRate))
         frameCount += 1
 
-        // Force keyframe every 4 seconds as a belt-and-suspenders guarantee
+        // Force keyframe on explicit request from the viewer, or every 2 s as a safety net
+        let forcedByViewer = forceKeyframePending.withLock { pending in
+            let v = pending; pending = false; return v
+        }
         var frameProperties: CFDictionary? = nil
-        if frameCount % Int64(frameRate * 4) == 1 {
+        if forcedByViewer || frameCount % Int64(frameRate * 2) == 1 {
             frameProperties = [kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue] as CFDictionary
         }
 

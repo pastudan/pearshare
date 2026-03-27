@@ -49,6 +49,8 @@ final class ControlChannel {
     var onRemoteHostCursorMoved: ((NSPoint) -> Void)?
     /// Both sides: peer has ended the session (hangup event received, or host watchdog fired).
     var onHangup: (() -> Void)?
+    /// Host only: viewer is requesting an immediate IDR keyframe (sent on viewer connect and on decode error).
+    var onKeyframeRequested: (() -> Void)?
 
     // MARK: - Private state
 
@@ -72,6 +74,9 @@ final class ControlChannel {
     private var peerConnection: NWConnection?
     /// Who currently drives the system cursor.
     private var currentController: ControlEvent.Controller = .host
+    /// Whether the host has opted-in to sharing keyboard & mouse with the viewer.
+    /// Defaults to false — the host must explicitly enable it via the session banner.
+    private var inputEnabled: Bool = false
     /// Persistent absolute position of the host's cursor (independent of the system cursor).
     private var hostPosition: NSPoint = .zero
     /// Tracks host's physical mouse while host has control so hostPosition stays current.
@@ -106,19 +111,47 @@ final class ControlChannel {
         }
     }
 
+    /// Enable or disable keyboard & mouse sharing on the host side.
+    /// When disabled (the default), viewer cursor position is still tracked for the overlay
+    /// but no input is injected and control cannot transfer to the viewer.
+    func setInputEnabled(_ enabled: Bool) {
+        guard role == .host else { return }
+        inputEnabled = enabled
+        if !enabled && currentController == .viewer {
+            transferControl(to: .host)
+        }
+    }
+
     /// Send a hangup event to the peer. Must be called before stop().
     func sendHangup() {
         // Viewer uses sendConnection; host uses peerConnection (send() only covers the viewer path).
         guard let data = ControlEvent.hangup.toData() else { return }
         switch role {
-        case .viewer: sendConnection?.send(content: data, completion: .idempotent)
-        case .host:   peerConnection?.send(content: data, completion: .idempotent)
+        case .viewer:
+            tapLog("[CTRL] viewer sendHangup: sendConnection=\(sendConnection != nil)")
+            sendConnection?.send(content: data, completion: .idempotent)
+        case .host:
+            tapLog("[CTRL] host sendHangup: peerConnection=\(peerConnection != nil)")
+            peerConnection?.send(content: data, completion: .idempotent)
         }
     }
 
     func stop() {
+        tapLog("[CTRL] \(role == .host ? "host" : "viewer") stop() — peerConn=\(peerConnection != nil) sendConn=\(sendConnection != nil)")
         heartbeatTimer?.invalidate(); heartbeatTimer = nil
         viewerWatchdogTimer?.invalidate(); viewerWatchdogTimer = nil
+
+        // Nil all callbacks first so any Tasks already enqueued on the MainActor
+        // (dispatched from background receive loops before stop() ran) are harmless —
+        // they may still call handleViewerEvent/handleViewerIncoming, but onHangup etc.
+        // will be nil and nothing will propagate to AppDelegate.
+        onHangup = nil
+        onRemoteCursorMoved = nil
+        onHostCursorMoved = nil
+        onControlTransfer = nil
+        onLocalCursorMoved = nil
+        onMouseExitedWindow = nil
+        onRemoteHostCursorMoved = nil
 
         for m in eventMonitors { NSEvent.removeMonitor(m) }
         eventMonitors.removeAll()
@@ -128,6 +161,9 @@ final class ControlChannel {
 
         sendConnection?.cancel()
         sendConnection = nil
+        // Cancel (not just nil) peerConnection so the OS socket closes immediately and
+        // any pending receive callbacks see an error and stop recursing.
+        peerConnection?.cancel()
         peerConnection = nil
         recvListener?.cancel()
         recvListener = nil
@@ -142,8 +178,13 @@ final class ControlChannel {
             port: NWEndpoint.Port(rawValue: UInt16(port))!,
             using: .udp
         )
-        conn.stateUpdateHandler = { state in
+        conn.stateUpdateHandler = { [weak self] state in
             logger.info("ControlChannel viewer UDP \(String(describing: state))")
+            // As soon as UDP is ready, ask the host for an immediate keyframe so the viewer
+            // doesn't have to wait for the next naturally-scheduled IDR (up to 2 seconds away).
+            if case .ready = state {
+                Task { @MainActor [weak self] in self?.send(.requestKeyframe) }
+            }
         }
         conn.start(queue: .global(qos: .userInteractive))
         self.sendConnection = conn
@@ -153,18 +194,30 @@ final class ControlChannel {
         installEventMonitors()
 
         // Keep the host's inactivity watchdog alive with periodic heartbeats.
+        // Timer.scheduledTimer always fires on the main run loop, so MainActor.assumeIsolated is safe.
         heartbeatTimer = Timer.scheduledTimer(
             withTimeInterval: Self.heartbeatInterval, repeats: true
-        ) { [weak self] _ in self?.send(.heartbeat) }
+        ) { [weak self] _ in MainActor.assumeIsolated { self?.send(.heartbeat) } }
     }
 
     /// Receive loop for host→viewer messages on the viewer's outbound connection.
     nonisolated private func receiveFromHost(on connection: NWConnection) {
         connection.receiveMessage { [weak self] data, _, _, error in
-            guard let self else { return }
-            if let error { logger.error("ControlChannel viewer recv error: \(error)"); return }
+            guard let self else {
+                tapLog("[CTRL] viewer receiveFromHost: self=nil, stopping loop")
+                return
+            }
+            if let error {
+                tapLog("[CTRL] viewer receiveFromHost error: \(error)")
+                logger.error("ControlChannel viewer recv error: \(error)")
+                return
+            }
             if let data, let event = ControlEvent.from(data: data) {
+                // Log only hangup to avoid flooding on cursor moves
+                if case .hangup = event { tapLog("[CTRL] viewer receiveFromHost: decoded hangup, dispatching to MainActor") }
                 Task { @MainActor in self.handleViewerIncoming(event) }
+            } else if let data {
+                tapLog("[CTRL] viewer receiveFromHost: \(data.count) bytes, failed to decode event")
             }
             self.receiveFromHost(on: connection)
         }
@@ -179,6 +232,7 @@ final class ControlChannel {
         case .hostCursorMoved(let nx, let ny):
             onRemoteHostCursorMoved?(denormalise(nx: nx, ny: ny))
         case .hangup:
+            tapLog("[CTRL] viewer: received hangup from host — onHangup=\(onHangup != nil)")
             logger.info("ControlChannel viewer: host sent hangup")
             onHangup?()
         default:
@@ -340,7 +394,12 @@ final class ControlChannel {
             conn.start(queue: .global(qos: .userInteractive))
             guard let self else { return }
             Task { @MainActor in
+                // Cancel the previous connection before overwriting — prevents duplicate
+                // receiveFromViewer loops and zombie sockets if the viewer reconnects.
+                let hadPrev = self.peerConnection != nil
+                self.peerConnection?.cancel()
                 self.peerConnection = conn
+                tapLog("[CTRL] host: newConnectionHandler fired (hadPrev=\(hadPrev)) peerConnection set from \(conn.endpoint)")
                 // Tell the viewer the current controller immediately so their
                 // overlay and cursor state is correct from the first frame.
                 if let data = ControlEvent.controlTransfer(controller: self.currentController).toData() {
@@ -401,9 +460,12 @@ final class ControlChannel {
         viewerWatchdogTimer = Timer.scheduledTimer(
             withTimeInterval: Self.viewerInactivityTimeout, repeats: false
         ) { [weak self] _ in
-            guard let self else { return }
-            logger.info("ControlChannel host: viewer watchdog fired — no heartbeat for \(Self.viewerInactivityTimeout)s")
-            self.onHangup?()
+            // Timer.scheduledTimer always fires on the main run loop.
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                logger.info("ControlChannel host: viewer watchdog fired — no heartbeat for \(Self.viewerInactivityTimeout)s")
+                self.onHangup?()
+            }
         }
     }
 
@@ -453,6 +515,8 @@ final class ControlChannel {
 
         case .mouseButton(let nx, let ny, let button, let down):
             let cgPt = displayPoint(nx: nx, ny: ny)
+            // Only transfer control and inject clicks when the host has opted-in to K&M sharing.
+            guard inputEnabled else { break }
             // First viewer click transfers control; subsequent clicks are injected normally.
             if down && currentController == .host {
                 transferControl(to: .viewer)
@@ -462,14 +526,12 @@ final class ControlChannel {
             }
 
         case .scroll(let nx, let ny, let dx, let dy, let precise):
-            if currentController == .viewer {
-                injectScroll(at: displayPoint(nx: nx, ny: ny), dx: dx, dy: dy, precise: precise)
-            }
+            guard inputEnabled, currentController == .viewer else { break }
+            injectScroll(at: displayPoint(nx: nx, ny: ny), dx: dx, dy: dy, precise: precise)
 
         case .keyEvent(let keyCode, let modifiers, let down):
-            if currentController == .viewer {
-                injectKey(keyCode: keyCode, modifiers: modifiers, down: down)
-            }
+            guard inputEnabled, currentController == .viewer else { break }
+            injectKey(keyCode: keyCode, modifiers: modifiers, down: down)
 
         case .controlTransfer, .hostCursorMoved:
             break  // host only sends these; viewer should never send them
@@ -482,6 +544,10 @@ final class ControlChannel {
 
         case .heartbeat:
             startViewerWatchdog()
+
+        case .requestKeyframe:
+            logger.info("ControlChannel host: viewer requested keyframe")
+            onKeyframeRequested?()
         }
     }
 

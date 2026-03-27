@@ -11,7 +11,7 @@
 #   ./scripts/build-macos.sh --release              # release build
 #   ./scripts/build-macos.sh --release --archive    # build, sign, notarize
 #
-# Deploy target: dan@100.99.149.84 → ~/Downloads/PearShare.app
+# Deploy target: dan@dans-macbook-air-blue → ~/Downloads/PearShare.app
 #
 # Notarization setup (one-time):
 #   xcrun notarytool store-credentials "pearshare-notarytool" \
@@ -37,7 +37,7 @@ SCHEME="PearShare"
 DERIVED_DATA="$REPO_ROOT/.build/macos-derived-data"
 ARCHIVE_PATH="$REPO_ROOT/.build/PearShare.xcarchive"
 EXPORT_PATH="$REPO_ROOT/.build/PearShare-export"
-DEPLOY_HOST="dan@100.99.149.84"
+DEPLOY_HOST="dan@dans-macbook-air-blue"
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 CONFIGURATION="Debug"

@@ -23,6 +23,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var rendererCancellable: AnyCancellable?
 
     private var activeSession: MediaSession?
+    private var sessionCounter = 0  // incremented each time launchSession is called
+
+    // Outgoing call state (while we're ringing a peer and waiting for them to answer)
+    private var outgoingCallWindow: NSWindow?
+    private var activeSignalingClient: SignalingClient?
+
+    // Deferred activation-policy restore: set when endSession() needs to switch back to
+    // .accessory but the menu-bar popover is open (switching while it's shown dismisses it).
+    // Applied in popoverDidClose(_:) instead.
+    private var pendingActivationPolicyRestore = false
 
     // Multiplayer cursor overlays:
     //   viewerCursorOverlay  — pastel blue, shown on HOST screen when host has control
@@ -41,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var viewerEventMonitors: [Any] = []
 
     let peerStore = PeerStore()
+    let sessionStateStore = SessionStateStore()
     private var discovery: PeerDiscovery?
     private var signalingServer: SignalingServer?
 
@@ -98,9 +109,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "person.2.fill", accessibilityDescription: "PearShare")
             button.action = #selector(togglePopover)
             button.target = self
+        }
+        updateMenuBarIcon(inSession: false)
+    }
+
+    private func updateMenuBarIcon(inSession: Bool) {
+        guard let button = statusItem?.button else { return }
+        if inSession {
+            let config = NSImage.SymbolConfiguration(paletteColors: [.pearGreen])
+            if let img = NSImage(systemSymbolName: "dot.radiowaves.left.and.right",
+                                 accessibilityDescription: "PearShare")?
+                            .withSymbolConfiguration(config) {
+                img.isTemplate = false
+                button.image = img
+            }
+        } else {
+            let img = NSImage(systemSymbolName: "person.2.fill", accessibilityDescription: "PearShare")
+            img?.isTemplate = true
+            button.image = img
         }
     }
 
@@ -110,10 +138,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             popover.performClose(nil)
         } else {
             let p = NSPopover()
+            p.delegate = self
             p.contentViewController = NSHostingController(
-                rootView: ContactListView(peerStore: peerStore, delegate: self)
+                rootView: ContactListView(peerStore: peerStore, sessionState: sessionStateStore, delegate: self)
             )
-            p.contentSize = NSSize(width: 300, height: 400)
+            p.contentSize = NSSize(width: 300, height: 420)
             p.behavior = .transient
             p.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             self.popover = p
@@ -171,11 +200,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.ringerWindow = window
     }
 
+    // MARK: - Outgoing call UI
+
+    private func showOutgoingCall(peer: PearPeer, intent: String) {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 300, height: 220),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.level = .floating
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = true
+        window.center()
+
+        let view = OutgoingCallView(peer: peer, intent: intent) { [weak self] in
+            self?.activeSignalingClient?.cancel()
+            self?.activeSignalingClient = nil
+            self?.dismissOutgoingCallWindow()
+        }
+        window.contentView = NSHostingView(rootView: view)
+        window.orderFrontRegardless()
+        self.outgoingCallWindow = window
+    }
+
+    private func dismissOutgoingCallWindow() {
+        outgoingCallWindow?.orderOut(nil)
+        outgoingCallWindow = nil
+    }
+
     // MARK: - Session launch
 
     func launchSession(descriptor: SessionDescriptor, peer: PearPeer, role: SessionRole) {
-        log.info("AppDelegate: launchSession role=\(String(describing: role)) peerIP=\(descriptor.peerIP)")
+        sessionCounter += 1
+        let sn = sessionCounter
+        tapLog("[SESSION-\(sn)] launchSession role=\(role) peerIP=\(descriptor.peerIP) controlPort=\(descriptor.controlPort)")
+        log.info("AppDelegate: launchSession #\(sn) role=\(String(describing: role)) peerIP=\(descriptor.peerIP)")
         activeSession?.stop()
+        sessionStateStore.activePeer = peer
+        sessionStateStore.role = role
+        updateMenuBarIcon(inSession: true)
 
         let session = MediaSession(descriptor: descriptor, role: role)
         activeSession = session
@@ -202,7 +267,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.hostGhostOverlay = hgo
         session.overlayWindowTitles = [kViewerCursorWindowTitle, kHostGhostCursorWindowTitle, kHostBannerWindowTitle]
 
-        let banner = HostBannerWindow.make(peer: peer) { [weak self] in self?.endSession() }
+        session.debugInfo.roleLabel     = "Host"
+        session.debugInfo.peerIP        = peer.tailscaleIP
+        session.debugInfo.peerHostname  = peer.displayName
+
+        let banner = HostBannerWindow.make(
+            peer: peer,
+            debugInfo: session.debugInfo,
+            onHangup: { [weak self] in self?.endSession() },
+            onInputToggled: { [weak self] enabled in
+                self?.activeSession?.controlChannel?.setInputEnabled(enabled)
+            }
+        )
         banner.orderFrontRegardless()
         self.hostBannerWindow = banner
 
@@ -227,7 +303,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         self?.activeSession?.setShowsCursor(true)
                     }
                 }
-                ctrl.onHangup = { [weak self] in self?.endSession() }
+                let sn = self.sessionCounter
+                tapLog("[SESSION-\(sn)] host ctrl.onHangup wired")
+                ctrl.onHangup = { [weak self] in
+                    tapLog("[SESSION-\(sn)] host onHangup fired → endSession")
+                    self?.endSession()
+                }
             } catch {
                 log.error("AppDelegate: host session.start() threw: \(error)")
                 endSession()
@@ -272,19 +353,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         self.sessionWindow = window
 
-        // Floating control pill — straddling the top edge of the session window.
-        let pill = ViewerControlPillPanel.make { [weak self] in self?.endSession() }
-        pill.orderFrontRegardless()
+        session.debugInfo.roleLabel     = "Viewer"
+        session.debugInfo.peerIP        = peer.tailscaleIP
+        session.debugInfo.peerHostname  = peer.displayName
+
+        // Control pill — child of the session window so the compositor always keeps it above.
+        // Moves are handled automatically (child follows parent); only resize needs manual
+        // repositioning to keep the pill anchored to the new top edge.
+        let pill = ViewerControlPillPanel.make(debugInfo: session.debugInfo) { [weak self] in self?.endSession() }
         self.viewerControlPill = pill
         repositionControlPill()
+        window.addChildWindow(pill, ordered: .above)
 
-        let moveObs = NotificationCenter.default.addObserver(
-            forName: NSWindow.didMoveNotification, object: window, queue: .main
-        ) { [weak self] _ in Task { @MainActor in self?.repositionControlPill() } }
         let resizeObs = NotificationCenter.default.addObserver(
             forName: NSWindow.didResizeNotification, object: window, queue: .main
         ) { [weak self] _ in Task { @MainActor in self?.repositionControlPill() } }
-        pillObservers = [moveObs, resizeObs]
+        pillObservers = [resizeObs]
 
         // Real-time pill drag: NSWindow.didMoveNotification is only posted AFTER a drag ends
         // when isMovableByWindowBackground is used, so we track it manually with local event
@@ -345,7 +429,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     vho?.hide()
                     self?.showViewerCursor()
                 }
-                ctrl.onHangup = { [weak self] in self?.endSession() }
+                let sn = self.sessionCounter
+                tapLog("[SESSION-\(sn)] viewer ctrl.onHangup wired")
+                ctrl.onHangup = { [weak self] in
+                    tapLog("[SESSION-\(sn)] viewer onHangup fired → endSession")
+                    self?.endSession()
+                }
             } catch {
                 log.error("AppDelegate: viewer session.start() threw: \(error)")
                 endSession()
@@ -401,38 +490,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Inverse of repositionControlPill: move the session window to stay anchored below the pill.
-    private func sessionWindowFollowsPill() {
-        guard let window = sessionWindow, let pill = viewerControlPill else { return }
-        // pill straddles window top edge → window.maxY == pill.midY
-        let x = pill.frame.midX - window.frame.width / 2
-        let y = pill.frame.midY - window.frame.height
-        window.setFrameOrigin(NSPoint(x: x, y: y))
-    }
-
     /// Install local NSEvent monitors that move the pill (and session window) in real-time
     /// while the user drags the pill. Local monitors fire continuously during the drag,
     /// unlike NSWindow.didMoveNotification which only fires after the drag completes.
     private func installPillDragMonitors(pill: NSWindow) {
         var dragActive = false
         var anchorMouse = NSPoint.zero
-        var anchorPillOrigin = NSPoint.zero
+        var anchorWindowOrigin = NSPoint.zero   // anchor the SESSION WINDOW, not the pill
 
-        let downM = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak pill] event in
+        // Dragging the pill moves the session window; the pill follows automatically as a child.
+        // Anchoring the parent avoids the double-move that would occur if we moved the child
+        // and then also moved the parent to follow it.
+        let downM = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self, weak pill] event in
             if let pill, pill.frame.contains(NSEvent.mouseLocation) {
                 dragActive = true
                 anchorMouse = NSEvent.mouseLocation
-                anchorPillOrigin = pill.frame.origin
+                anchorWindowOrigin = self?.sessionWindow?.frame.origin ?? .zero
+                self?.sessionWindow?.orderFront(nil)
             }
             return event
         }
-        let dragM = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDragged) { [weak self, weak pill] event in
-            guard dragActive, let self, let pill else { return event }
+        let dragM = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDragged) { [weak self] event in
+            guard dragActive, let window = self?.sessionWindow else { return event }
             let cur = NSEvent.mouseLocation
-            pill.setFrameOrigin(NSPoint(
-                x: anchorPillOrigin.x + cur.x - anchorMouse.x,
-                y: anchorPillOrigin.y + cur.y - anchorMouse.y
+            window.setFrameOrigin(NSPoint(
+                x: anchorWindowOrigin.x + cur.x - anchorMouse.x,
+                y: anchorWindowOrigin.y + cur.y - anchorMouse.y
             ))
-            self.sessionWindowFollowsPill()
             return event
         }
         let upM = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { event in
@@ -444,7 +528,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - End session
 
     func endSession() {
-        guard activeSession != nil || sessionWindow != nil || hostBannerWindow != nil else { return }
+        let sn = sessionCounter
+        tapLog("[SESSION-\(sn)] endSession called — activeSession=\(activeSession != nil) window=\(sessionWindow != nil) banner=\(hostBannerWindow != nil)")
+        guard activeSession != nil || sessionWindow != nil || hostBannerWindow != nil else {
+            tapLog("[SESSION-\(sn)] endSession: guard failed (already torn down), returning")
+            return
+        }
 
         // Capture and nil everything atomically before any teardown to prevent re-entry
         // (e.g. from windowWillClose firing synchronously during sessionWindow?.close()).
@@ -468,8 +557,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewerEventMonitors = []
 
         // Notify the peer before tearing down the control channel.
-        session?.controlChannel?.sendHangup()
+        let ctrl = session?.controlChannel
+        tapLog("[SESSION-\(sn)] endSession: ctrl=\(ctrl != nil)  calling sendHangup")
+        ctrl?.sendHangup()
         session?.stop()
+
+        // Dissolve the child-window relationship before ordering out. If we skip this,
+        // ordering out the parent also hides the child, but the explicit removeChildWindow
+        // ensures AppKit doesn't try to re-show the child when the parent is later released.
+        if let pill { window?.removeChildWindow(pill) }
 
         // Use orderOut rather than close so AppKit doesn't snapshot the Metal view
         // (now invalidated) for a window-close animation — which would crash in
@@ -486,15 +582,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         showViewerCursor()
         viewerIsInControl = false
 
-        NSApp.setActivationPolicy(.accessory)
+        sessionStateStore.activePeer = nil
+        sessionStateStore.role = nil
+        updateMenuBarIcon(inSession: false)
+
+        // Only switch back to .accessory when we actually promoted to .regular —
+        // which only happens for viewer sessions (the session window was present).
+        // If the menu-bar popover is currently open, defer the switch: calling
+        // setActivationPolicy while the popover is visible dismisses it immediately.
+        // popoverDidClose(_:) picks up the deferred flag and applies it then.
+        if window != nil {
+            if popover?.isShown == true {
+                pendingActivationPolicyRestore = true
+            } else {
+                NSApp.setActivationPolicy(.accessory)
+            }
+        }
     }
 
     // MARK: - Auto-accept notification banner
 
-    private func showAutoAcceptNotification(for peer: PearPeer) {
+    private func showAutoAcceptNotification(for peer: PearPeer, intent: String) {
         let content = UNMutableNotificationContent()
-        content.title = "Remote session started"
-        content.body = "\(peer.displayName) connected to your screen via trusted access."
+        if intent == "share" {
+            content.title = "Screen share started"
+            content.body = "\(peer.displayName) is now sharing their screen with you."
+        } else {
+            content.title = "Remote session started"
+            content.body = "\(peer.displayName) connected to your screen via trusted access."
+        }
         content.sound = .default
 
         let request = UNNotificationRequest(
@@ -521,7 +637,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 extension AppDelegate: ContactListViewDelegate {
     func ring(peer: PearPeer) {
-        guard activeSession == nil else { return }
+        guard activeSession == nil, outgoingCallWindow == nil else { return }
 
         requestAccessibilityIfNeeded()
 
@@ -529,22 +645,42 @@ extension AppDelegate: ContactListViewDelegate {
             guard await ScreenCapturePermission.requestIfNeeded() else { return }
 
             let client = SignalingClient(peer: peer, peerStore: peerStore)
+            activeSignalingClient = client
+            client.onRinging = { [weak self] in
+                self?.showOutgoingCall(peer: peer, intent: "share")
+            }
             client.onAccepted = { [weak self] descriptor in
+                self?.activeSignalingClient = nil
+                self?.dismissOutgoingCallWindow()
                 log.info("AppDelegate: ring accepted, launching host session to \(descriptor.peerIP):\(descriptor.videoPort)")
                 self?.launchSession(descriptor: descriptor, peer: peer, role: .host)
+            }
+            client.onFailed = { [weak self] _ in
+                self?.activeSignalingClient = nil
+                self?.dismissOutgoingCallWindow()
             }
             client.ring()
         }
     }
 
     func requestScreen(from peer: PearPeer) {
-        guard activeSession == nil else { return }
+        guard activeSession == nil, outgoingCallWindow == nil else { return }
 
         Task {
             let client = SignalingClient(peer: peer, peerStore: peerStore)
+            activeSignalingClient = client
+            client.onRinging = { [weak self] in
+                self?.showOutgoingCall(peer: peer, intent: "request")
+            }
             client.onAccepted = { [weak self] descriptor in
+                self?.activeSignalingClient = nil
+                self?.dismissOutgoingCallWindow()
                 log.info("AppDelegate: screen request accepted, launching viewer session")
                 self?.launchSession(descriptor: descriptor, peer: peer, role: .viewer)
+            }
+            client.onFailed = { [weak self] _ in
+                self?.activeSignalingClient = nil
+                self?.dismissOutgoingCallWindow()
             }
             client.ringAsRequest()
         }
@@ -608,9 +744,20 @@ extension AppDelegate: SignalingServerDelegate {
     }
 
     func signalingServer(_ server: SignalingServer, autoAcceptedRingFrom peer: PearPeer, descriptor: SessionDescriptor, intent: String) {
-        log.info("AppDelegate: auto-accepted ring from trusted device \(peer.tailscaleIP) intent=\(intent)")
-        showAutoAcceptNotification(for: peer)
+        log.info("AppDelegate: auto-accepted ring from \(peer.tailscaleIP) intent=\(intent)")
+        showAutoAcceptNotification(for: peer, intent: intent)
         let role: SessionRole = intent == "request" ? .host : .viewer
         launchSession(descriptor: descriptor, peer: peer, role: role)
+    }
+}
+
+// MARK: - NSPopoverDelegate
+
+extension AppDelegate: NSPopoverDelegate {
+    func popoverDidClose(_ notification: Notification) {
+        if pendingActivationPolicyRestore {
+            pendingActivationPolicyRestore = false
+            NSApp.setActivationPolicy(.accessory)
+        }
     }
 }

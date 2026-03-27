@@ -8,11 +8,16 @@ protocol ContactListViewDelegate: AnyObject {
     func requestScreen(from peer: PearPeer)
     /// Called when the user confirms trust through TrustApprovalView.
     func grantTrust(to peer: PearPeer)
+    /// End the current active session.
+    func endSession()
 }
 
 struct ContactListView: View {
     @ObservedObject var peerStore: PeerStore
+    @ObservedObject var sessionState: SessionStateStore
     weak var delegate: ContactListViewDelegate?
+
+    @AppStorage(PearSettings.autoAcceptSharesKey) private var autoAcceptShares = false
 
     @State private var showingExcludedApps = false
     @State private var showingTrustedDevices = false
@@ -24,9 +29,11 @@ struct ContactListView: View {
             Divider()
             peerList
             Divider()
+            autoAcceptRow
+            Divider()
             footer
         }
-        .frame(width: 300, height: 400)
+        .frame(width: 300, height: 420)
         .background(.regularMaterial)
         .sheet(isPresented: $showingExcludedApps) {
             ExcludedAppsView(store: ExcludedAppsStore.shared)
@@ -58,6 +65,29 @@ struct ContactListView: View {
             Text(peerStore.selfHostName)
                 .font(.caption.bold())
                 .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    // MARK: - Auto-accept toggle
+
+    private var autoAcceptRow: some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Auto-accept screen shares")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.primary)
+                Text("When a peer offers to share their screen, start viewing immediately — no prompt.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Toggle("", isOn: $autoAcceptShares)
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .labelsHidden()
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -108,9 +138,12 @@ struct ContactListView: View {
                 PeerRowView(
                     peer: peer,
                     isTrusted: TrustedDeviceStore.shared.isTrusted(peerID: peer.id),
+                    isActivePeer: sessionState.activePeer?.id == peer.id,
+                    isInSession: sessionState.isInSession,
                     onShare: { delegate?.ring(peer: peer) },
                     onRequest: { delegate?.requestScreen(from: peer) },
-                    onAlwaysAllow: { trustApprovalPeer = peer }
+                    onAlwaysAllow: { trustApprovalPeer = peer },
+                    onEndSession: { delegate?.endSession() }
                 )
             }
             .listStyle(.plain)
@@ -140,9 +173,12 @@ struct ContactListView: View {
 struct PeerRowView: View {
     let peer: PearPeer
     let isTrusted: Bool
+    let isActivePeer: Bool
+    let isInSession: Bool
     let onShare: () -> Void
     let onRequest: () -> Void
     let onAlwaysAllow: () -> Void
+    let onEndSession: () -> Void
 
     @State private var isHovered = false
 
@@ -158,7 +194,14 @@ struct PeerRowView: View {
                 HStack(spacing: 5) {
                     Text(peer.displayName)
                         .font(.subheadline.weight(.medium))
-                    if isTrusted {
+                    if isActivePeer {
+                        Text("Active")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.pearGreen.opacity(0.18), in: Capsule())
+                            .foregroundStyle(Color.pearGreen.opacity(0.9))
+                    } else if isTrusted {
                         Text("Auto-answers")
                             .font(.caption2.weight(.medium))
                             .padding(.horizontal, 5)
@@ -180,29 +223,42 @@ struct PeerRowView: View {
             Spacer()
 
             // Actions — appear on hover
-            if isHovered && peer.status != .busy {
-                HStack(spacing: 8) {
-                    // Secondary: Request (text link style)
-                    Button(action: onRequest) {
-                        Text("Request")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .underline()
+            if isHovered {
+                if isActivePeer {
+                    // Active session controls
+                    Button(action: onEndSession) {
+                        Text("End")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(.red, in: Capsule())
                     }
                     .buttonStyle(.plain)
-                    .transition(.opacity)
-                    .help("Ask \(peer.displayName) to share their screen with you")
-
-                    // Primary: Share (icon button)
-                    Button(action: onShare) {
-                        Image(systemName: "rectangle.on.rectangle.fill")
-                            .font(.caption)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.mini)
-                    .tint(.green)
                     .transition(.opacity.combined(with: .scale))
-                    .help("Share your screen with \(peer.displayName)")
+                } else if !isInSession && peer.status != .busy {
+                    // Normal call controls — hidden while any other session is active
+                    HStack(spacing: 8) {
+                        Button(action: onRequest) {
+                            Text("Request")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .underline()
+                        }
+                        .buttonStyle(.plain)
+                        .transition(.opacity)
+                        .help("Ask \(peer.displayName) to share their screen with you")
+
+                        Button(action: onShare) {
+                            Image(systemName: "rectangle.on.rectangle.fill")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.mini)
+                        .tint(.green)
+                        .transition(.opacity.combined(with: .scale))
+                        .help("Share your screen with \(peer.displayName)")
+                    }
                 }
             }
         }
@@ -211,19 +267,25 @@ struct PeerRowView: View {
         .onHover { isHovered = $0 }
         .animation(.easeInOut(duration: 0.15), value: isHovered)
         .contextMenu {
-            Button {
-                onShare()
-            } label: {
-                Label("Share My Screen", systemImage: "rectangle.on.rectangle.fill")
-            }
-            .disabled(peer.status == .busy)
+            if isActivePeer {
+                Button(action: onEndSession) {
+                    Label("End Session", systemImage: "phone.down.fill")
+                }
+            } else {
+                Button {
+                    onShare()
+                } label: {
+                    Label("Share My Screen", systemImage: "rectangle.on.rectangle.fill")
+                }
+                .disabled(peer.status == .busy || isInSession)
 
-            Button {
-                onRequest()
-            } label: {
-                Label("Request Their Screen", systemImage: "rectangle.on.rectangle")
+                Button {
+                    onRequest()
+                } label: {
+                    Label("Request Their Screen", systemImage: "rectangle.on.rectangle")
+                }
+                .disabled(peer.status == .busy || isInSession)
             }
-            .disabled(peer.status == .busy)
 
             Divider()
 

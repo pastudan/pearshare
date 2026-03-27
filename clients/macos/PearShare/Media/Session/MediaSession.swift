@@ -42,7 +42,11 @@ final class MediaSession: NSObject {
 
     let descriptor: SessionDescriptor
     let role: SessionRole
-    let renderer: VideoRenderer?   // non-nil when role == .viewer
+    // nonisolated(unsafe) because enqueue() is thread-safe (uses bufferLock internally)
+    // and we want to call it directly from the VT decode callback without a MainActor hop.
+    nonisolated(unsafe) let renderer: VideoRenderer?   // non-nil when role == .viewer
+
+    let debugInfo = SessionDebugInfo()
 
     private var captureManager: ScreenCaptureManager?
     // Exposed so AppDelegate can attach cursor/activity callbacks after start()
@@ -55,6 +59,7 @@ final class MediaSession: NSObject {
     // references so we don't pay the MainActor hop for every encoded frame.
     nonisolated(unsafe) private var encoder: VideoEncoder?
     nonisolated(unsafe) private var hasLoggedFirstSCKFrame = false
+    nonisolated(unsafe) private var hasUpdatedDecodedDims  = false
     nonisolated(unsafe) private var packetizer: RTPPacketizer?
     nonisolated(unsafe) private var videoSendConnection: NWConnection?
 
@@ -97,18 +102,33 @@ final class MediaSession: NSObject {
         // half-resolution on Retina displays. CoreGraphics returns the true pixel count.
         let physW = CGDisplayPixelsWide(display.displayID)
         let physH = CGDisplayPixelsHigh(display.displayID)
-        let captureWidth  = physW > 0 ? physW : display.width
-        let captureHeight = physH > 0 ? physH : display.height
-        logger.info("Host: display \(captureWidth)×\(captureHeight) px (SCDisplay: \(display.width)×\(display.height) pts)")
+        let physWidth  = physW > 0 ? physW : display.width
+        let physHeight = physH > 0 ? physH : display.height
+        logger.info("Host: display \(physWidth)×\(physHeight) px (SCDisplay: \(display.width)×\(display.height) pts)")
         tapLog("[HOST-1] SCDisplay logical=\(display.width)×\(display.height) pts  |  CGDisplay physical=\(physW)×\(physH) px  |  displayID=\(display.displayID)")
+
+        // Encode at native physical resolution. Apple Silicon hardware HEVC handles
+        // ultrawide and HiDPI displays (3440×1440, 5K, etc.) without issue.
+        // Dimensions must be even numbers as required by the video codec.
+        let encWidth  = (physWidth  + 1) & ~1
+        let encHeight = (physHeight + 1) & ~1
+        tapLog("[HOST-1b] Encode size (native): \(encWidth)×\(encHeight) px")
 
         let enc = VideoEncoder()
         enc.delegate = self
         enc.frameRate = 15
-        try enc.prepare(width: captureWidth, height: captureHeight)
+        try enc.prepare(width: encWidth, height: encHeight)
         self.encoder = enc
-        tapLog("[HOST-2] Encoder prepared: \(captureWidth)×\(captureHeight) px  |  fps=\(enc.frameRate)  |  bitrate=\(enc.targetBitrate/1_000_000) Mbps")
-        logger.info("Host: encoder ready")
+        tapLog("[HOST-2] Encoder prepared: \(encWidth)×\(encHeight) px  |  fps=\(enc.frameRate)  |  uncapped bitrate")
+        logger.info("Host: encoder ready at \(encWidth)×\(encHeight)")
+
+        debugInfo.setStreamInfo(
+            encodeWidth: encWidth, encodeHeight: encHeight,
+            physicalWidth: physWidth, physicalHeight: physHeight,
+            targetFPS: enc.frameRate,
+            targetBitrateMbps: 0
+        )
+        debugInfo.start()
 
         self.packetizer = RTPPacketizer(streamID: kPearStreamVideo)
 
@@ -125,6 +145,9 @@ final class MediaSession: NSObject {
 
         // Control channel: host side listens for remote input events
         let ctrl = ControlChannel(role: .host, port: descriptor.controlPort, peerIP: nil)
+        ctrl.onKeyframeRequested = { [weak self] in
+            self?.encoder?.forceNextKeyframe()
+        }
         ctrl.start()
         self.controlChannel = ctrl
         logger.info("Host: control channel listening on port \(self.descriptor.controlPort)")
@@ -134,6 +157,9 @@ final class MediaSession: NSObject {
         capture.framesPerSecond = 15
         capture.excludedBundleIDs = ExcludedAppsStore.shared.enabledBundleIDs
         capture.excludedWindowTitles = overlayWindowTitles
+        // Tell SCKit to deliver pixel buffers at the capped encode size, not native resolution.
+        // Tell SCKit to deliver pixel buffers at native resolution.
+        capture.outputSize = CGSize(width: encWidth, height: encHeight)
         try await capture.startCapture(display: display)
         self.captureManager = capture
         logger.info("Host: capture started")
@@ -182,11 +208,20 @@ final class MediaSession: NSObject {
         listener.start(queue: .global(qos: .userInteractive))
         self.videoRecvListener = listener
         logger.info("Viewer: listener started on port \(self.descriptor.videoPort)")
+
+        debugInfo.setStreamInfo(
+            encodeWidth: 0, encodeHeight: 0,
+            physicalWidth: 0, physicalHeight: 0,
+            targetFPS: 0,
+            targetBitrateMbps: 0
+        )
+        debugInfo.start()
     }
 
     // MARK: - Stop
 
     func stop() {
+        debugInfo.stop()
         captureManager?.stopCapture()
         controlChannel?.stop()
         controlChannel = nil
@@ -212,13 +247,13 @@ final class MediaSession: NSObject {
             guard let self else { return }
             if let error { logger.error("Viewer: receive error \(error)"); return }
             guard let data else { return }
+            self.debugInfo.recordBytes(data.count)
             self.depacketizer?.receive(packet: data)
             self.receiveVideoPackets(from: connection)
         }
     }
 
     nonisolated private func handleReassembledFrame(_ frame: RTPDepacketizer.ReassembledFrame) {
-        logger.info("Viewer: reassembled frame \(frame.nalUnit.count) bytes, keyframe=\(frame.isKeyframe)")
         decoder?.decode(annexBData: frame.nalUnit, isKeyframe: frame.isKeyframe)
     }
 }
@@ -248,6 +283,9 @@ extension MediaSession: VideoEncoderDelegate {
         guard let pktz = packetizer,
               let conn = videoSendConnection else { return }
 
+        debugInfo.recordFrame()
+        debugInfo.recordBytes(data.count)
+
         let packets = pktz.packetize(nalUnit: data, isKeyframe: isKeyframe, presentationTimestamp: presentationTimestamp)
         if isKeyframe { logger.info("Host: sending keyframe, \(packets.count) RTP packets, \(data.count) bytes") }
         for packet in packets {
@@ -260,9 +298,15 @@ extension MediaSession: VideoEncoderDelegate {
 
 extension MediaSession: VideoDecoderDelegate {
     nonisolated func videoDecoder(_ decoder: VideoDecoder, didDecodeFrame pixelBuffer: CVPixelBuffer, presentationTimestamp: CMTime) {
-        logger.info("Viewer: decoded frame, enqueueing to renderer")
-        Task { @MainActor in
-            renderer?.enqueue(pixelBuffer: pixelBuffer)
+        // renderer.enqueue() is thread-safe (internal NSLock), so call directly on the
+        // VT decode callback queue — no MainActor hop needed for every frame.
+        renderer?.enqueue(pixelBuffer: pixelBuffer)
+        debugInfo.recordFrame()
+        if !hasUpdatedDecodedDims {
+            hasUpdatedDecodedDims = true
+            let w = CVPixelBufferGetWidth(pixelBuffer)
+            let h = CVPixelBufferGetHeight(pixelBuffer)
+            Task { @MainActor [weak self] in self?.debugInfo.updateStreamDimensions(width: w, height: h) }
         }
     }
 }

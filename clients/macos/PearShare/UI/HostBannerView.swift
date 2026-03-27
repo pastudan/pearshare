@@ -10,9 +10,14 @@ let kHostBannerWindowTitle = "PearShare-HostBanner"
 /// the host continues working, but provides obvious session controls.
 final class HostBannerWindow: NSWindow {
 
-    static func make(peer: PearPeer, onHangup: @escaping () -> Void) -> HostBannerWindow {
+    static func make(
+        peer: PearPeer,
+        debugInfo: SessionDebugInfo,
+        onHangup: @escaping () -> Void,
+        onInputToggled: @escaping (Bool) -> Void
+    ) -> HostBannerWindow {
         let w = HostBannerWindow()
-        let view = HostBannerView(peer: peer, onHangup: onHangup)
+        let view = HostBannerView(peer: peer, debugInfo: debugInfo, onHangup: onHangup, onInputToggled: onInputToggled)
         w.title = kHostBannerWindowTitle
         let hosting = NSHostingView(rootView: view)
         hosting.wantsLayer = true
@@ -21,7 +26,7 @@ final class HostBannerWindow: NSWindow {
         // causing a rectangular box around the capsule and blocking transparency.
         hosting.layer?.backgroundColor = NSColor.clear.cgColor
         if let screen = NSScreen.main {
-            let x = screen.frame.minX + (screen.frame.width - 380) / 2
+            let x = screen.frame.minX + (screen.frame.width - 460) / 2
             let y = screen.visibleFrame.minY + 60
             w.setFrameOrigin(NSPoint(x: x, y: y))
         } else {
@@ -32,7 +37,7 @@ final class HostBannerWindow: NSWindow {
 
     private init() {
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 380, height: 52),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 52),
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
@@ -50,11 +55,15 @@ final class HostBannerWindow: NSWindow {
 
 struct HostBannerView: View {
     let peer: PearPeer
+    @ObservedObject var debugInfo: SessionDebugInfo
     let onHangup: () -> Void
+    let onInputToggled: (Bool) -> Void
 
     @State private var elapsed: TimeInterval = 0
     @State private var timer: Timer?
     @State private var isMuted = false
+    @State private var isInputEnabled = false
+    @State private var showDebug = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -96,6 +105,38 @@ struct HostBannerView: View {
             Spacer(minLength: 8)
 
             Button {
+                showDebug.toggle()
+            } label: {
+                Image(systemName: "ant.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(showDebug ? .white : .black.opacity(0.45))
+                    .frame(width: 28, height: 28)
+                    .background(showDebug ? Color.black.opacity(0.35) : Color.black.opacity(0.09), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $showDebug, arrowEdge: .bottom) {
+                SessionDebugView(info: debugInfo)
+            }
+            .padding(.trailing, 6)
+
+            // K&M sharing toggle — off by default; host must opt in
+            Button {
+                isInputEnabled.toggle()
+                onInputToggled(isInputEnabled)
+            } label: {
+                Image(systemName: isInputEnabled ? "keyboard.fill" : "keyboard")
+                    .font(.system(size: 11))
+                    .foregroundStyle(isInputEnabled ? .white : .black.opacity(0.45))
+                    .frame(width: 28, height: 28)
+                    .background(isInputEnabled ? Color.blue : .black.opacity(0.09), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .help(isInputEnabled
+                  ? "Keyboard & mouse sharing on — click to disable"
+                  : "Enable keyboard & mouse sharing with \(peer.displayName)")
+            .padding(.trailing, 6)
+
+            Button {
                 isMuted.toggle()
             } label: {
                 Image(systemName: isMuted ? "mic.slash.fill" : "mic.fill")
@@ -107,7 +148,7 @@ struct HostBannerView: View {
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 14)
-        .frame(width: 380, height: 52)
+        .frame(width: 460, height: 52)
         .background(
             Capsule()
                 .fill(Color.pearGreen.opacity(0.90))

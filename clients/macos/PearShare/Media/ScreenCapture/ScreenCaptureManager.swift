@@ -38,6 +38,12 @@ final class ScreenCaptureManager: NSObject {
     /// Window titles (exact match) to exclude — used to exclude overlay NSWindows by title.
     var excludedWindowTitles: [String] = []
 
+    /// Override the SCStream output resolution (pixel dimensions). When set, SCKit scales the
+    /// captured display down to this size before delivering pixel buffers — the encoder and
+    /// viewer both work at this resolution rather than the display's native resolution.
+    /// Leave nil to use the physical display resolution (not recommended for large/ultrawide displays).
+    var outputSize: CGSize?
+
     // MARK: - Available content
 
     /// Returns shareable displays and windows for the picker.
@@ -149,10 +155,14 @@ final class ScreenCaptureManager: NSObject {
     private func startStream(with filter: SCContentFilter) async throws {
         let config = SCStreamConfiguration()
 
-        // Use physical pixel dimensions via CoreGraphics — SCDisplay.width/height and
-        // filter.contentRect are in logical points, which gives half-resolution output
-        // on Retina (2×) displays. CGDisplayPixelsWide/High return the true pixel count.
-        if let display = targetDisplay {
+        // Prefer an explicit outputSize (caller has already applied any resolution cap).
+        // Fall back to physical pixel dimensions via CoreGraphics — SCDisplay.width/height
+        // are logical points, which gives half-resolution on Retina displays.
+        if let size = outputSize {
+            config.width  = Int(size.width)
+            config.height = Int(size.height)
+            tapLog("[HOST-2b] SCStreamConfig (capped): \(config.width)×\(config.height)")
+        } else if let display = targetDisplay {
             let physW = CGDisplayPixelsWide(display.displayID)
             let physH = CGDisplayPixelsHigh(display.displayID)
             config.width  = physW > 0 ? physW : 2560
@@ -163,7 +173,7 @@ final class ScreenCaptureManager: NSObject {
             } else {
                 rectDesc = "n/a (<macOS14)"
             }
-            tapLog("[HOST-2b] SCStreamConfig: width=\(config.width) height=\(config.height)  |  CGDisplay=\(physW)×\(physH)  |  contentRect=\(rectDesc)")
+            tapLog("[HOST-2b] SCStreamConfig (native): width=\(config.width) height=\(config.height)  |  CGDisplay=\(physW)×\(physH)  |  contentRect=\(rectDesc)")
         } else {
             config.width  = 2560
             config.height = 1600
@@ -171,15 +181,18 @@ final class ScreenCaptureManager: NSObject {
         }
 
         config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(framesPerSecond))
-        config.queueDepth = 3
+        config.queueDepth = 5   // slightly deeper queue to absorb keyframe spikes
 
         config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         config.capturesAudio = false
         config.showsCursor = true   // host has control at session start; will be toggled dynamically
 
         self.currentConfig = config
-        let output = StreamOutput()
-        output.delegate = self
+
+        // Store a capture callback at @MainActor time so StreamOutput can invoke the
+        // nonisolated delegate method directly on SCKit's queue — no actor-hop per frame.
+        let captureCallback = makeFrameCallback()
+        let output = StreamOutput(onFrame: captureCallback, owner: self)
         self.streamOutput = output
 
         let s = SCStream(filter: filter, configuration: config, delegate: output)
@@ -187,28 +200,44 @@ final class ScreenCaptureManager: NSObject {
         try await s.startCapture()
         self.stream = s
     }
+
+    /// Builds a closure that calls the delegate's nonisolated frame method directly from
+    /// SCKit's delivery queue, avoiding the Task { @MainActor } hop on every frame.
+    private func makeFrameCallback() -> (CMSampleBuffer) -> Void {
+        // Capture weak refs at @MainActor time; the closure itself has no actor requirement.
+        weak let weakSelf = self
+        weak let weakDelegate = delegate as AnyObject
+        return { sampleBuffer in
+            guard let manager = weakSelf,
+                  let del = weakDelegate as? ScreenCaptureManagerDelegate else { return }
+            del.screenCaptureManager(manager, didOutputSampleBuffer: sampleBuffer)
+        }
+    }
 }
 
 // MARK: - StreamOutput (SCStreamOutput + SCStreamDelegate)
 
 private final class StreamOutput: NSObject, SCStreamOutput, SCStreamDelegate {
-    weak var delegate: ScreenCaptureManager?
+    // Called directly on SCKit's queue — no actor hop.
+    private let onFrame: (CMSampleBuffer) -> Void
+    // Weak back-reference used only for the stop notification (needs @MainActor hop).
+    weak var owner: ScreenCaptureManager?
+
+    init(onFrame: @escaping (CMSampleBuffer) -> Void, owner: ScreenCaptureManager) {
+        self.onFrame = onFrame
+        self.owner = owner
+    }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of outputType: SCStreamOutputType) {
-        guard outputType == .screen else { return }
-        guard let d = delegate else { return }
-        guard sampleBuffer.numSamples > 0 else { return }
-
-        // Deliver directly — delegate protocol is explicitly off-main-actor safe
-        Task { @MainActor in
-            d.delegate?.screenCaptureManager(d, didOutputSampleBuffer: sampleBuffer)
-        }
+        guard outputType == .screen, sampleBuffer.numSamples > 0 else { return }
+        // Invoke directly — no actor hop, no Task allocation per frame.
+        onFrame(sampleBuffer)
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        guard let d = delegate else { return }
+        guard let owner else { return }
         Task { @MainActor in
-            d.delegate?.screenCaptureManagerDidStop(d)
+            owner.delegate?.screenCaptureManagerDidStop(owner)
         }
     }
 }

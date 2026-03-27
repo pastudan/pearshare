@@ -24,6 +24,8 @@ enum ControlEvent: Codable {
     case hangup
     /// Viewer → host keepalive; host ends the session if none arrive within the watchdog window.
     case heartbeat
+    /// Viewer → host: please send an IDR keyframe immediately so the viewer can start rendering.
+    case requestKeyframe
 
     // MARK: - Nested types
 
@@ -47,7 +49,7 @@ enum ControlEvent: Codable {
 
     private enum EventType: String, Codable {
         case mouseMoved, mouseButton, scroll, keyEvent, controlTransfer, hostCursorMoved
-        case hangup, heartbeat
+        case hangup, heartbeat, requestKeyframe
     }
 
     init(from decoder: Decoder) throws {
@@ -93,6 +95,8 @@ enum ControlEvent: Codable {
             self = .hangup
         case .heartbeat:
             self = .heartbeat
+        case .requestKeyframe:
+            self = .requestKeyframe
         }
     }
 
@@ -132,6 +136,8 @@ enum ControlEvent: Codable {
             try c.encode(EventType.hangup, forKey: .type)
         case .heartbeat:
             try c.encode(EventType.heartbeat, forKey: .type)
+        case .requestKeyframe:
+            try c.encode(EventType.requestKeyframe, forKey: .type)
         }
     }
 

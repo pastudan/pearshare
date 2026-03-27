@@ -38,6 +38,8 @@
 		PB000001000000000000PB02 /* PearBrand.swift in Sources */ = {isa = PBXBuildFile; fileRef = PB000001000000000000PB01 /* PearBrand.swift */; };
 		HB000001000000000000HB02 /* HostBannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = HB000001000000000000HB01 /* HostBannerView.swift */; };
 		VP000001000000000000VP02 /* ViewerControlPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = VP000001000000000000VP01 /* ViewerControlPill.swift */; };
+		OC000001000000000000OC02 /* OutgoingCallView.swift in Sources */ = {isa = PBXBuildFile; fileRef = OC000001000000000000OC01 /* OutgoingCallView.swift */; };
+		SD000001000000000000SD02 /* SessionDebugInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = SD000001000000000000SD01 /* SessionDebugInfo.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -75,6 +77,8 @@
 		PB000001000000000000PB01 /* PearBrand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PearBrand.swift; sourceTree = "<group>"; };
 		HB000001000000000000HB01 /* HostBannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostBannerView.swift; sourceTree = "<group>"; };
 		VP000001000000000000VP01 /* ViewerControlPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewerControlPill.swift; sourceTree = "<group>"; };
+		OC000001000000000000OC01 /* OutgoingCallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutgoingCallView.swift; sourceTree = "<group>"; };
+		SD000001000000000000SD01 /* SessionDebugInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionDebugInfo.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -107,6 +111,7 @@
 			isa = PBXGroup;
 			children = (
 				FE38E9493AE34450A92365C7 /* MediaSession.swift */,
+				SD000001000000000000SD01 /* SessionDebugInfo.swift */,
 			);
 			path = Session;
 			sourceTree = "<group>";
@@ -182,6 +187,7 @@
 				PB000001000000000000PB01 /* PearBrand.swift */,
 				HB000001000000000000HB01 /* HostBannerView.swift */,
 				VP000001000000000000VP01 /* ViewerControlPill.swift */,
+				OC000001000000000000OC01 /* OutgoingCallView.swift */,
 			);
 			path = UI;
 			sourceTree = "<group>";
@@ -324,6 +330,8 @@
 				PB000001000000000000PB02 /* PearBrand.swift in Sources */,
 				HB000001000000000000HB02 /* HostBannerView.swift in Sources */,
 				VP000001000000000000VP02 /* ViewerControlPill.swift in Sources */,
+				OC000001000000000000OC02 /* OutgoingCallView.swift in Sources */,
+				SD000001000000000000SD02 /* SessionDebugInfo.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
