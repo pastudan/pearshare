@@ -45,7 +45,7 @@ struct ViewerControlPillView: View {
 
     @State private var elapsed: TimeInterval = 0
     @State private var timer: Timer?
-    @State private var isMuted = false
+    @State private var isMuted = true
     @State private var showDebug = false
 
     var body: some View {
