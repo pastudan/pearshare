@@ -115,17 +115,18 @@ export default function Privacy() {
           <p className="text-sm leading-relaxed">
             If you purchase a PearShare Pro license, payment is processed by{" "}
             <a
-              href="https://www.paddle.com/legal/privacy"
+              href="https://stripe.com/privacy"
               target="_blank"
               rel="noopener noreferrer"
               style={{ color: "var(--accent)" }}
             >
-              Paddle
+              Stripe
             </a>
-            , our merchant of record. PearShare does not receive or store your
-            payment details. When activating a license key in the app, the key
-            is sent to Paddle's verification API to confirm its validity. No
-            other personal data is transmitted during this process.
+            . PearShare does not receive or store your payment details. After
+            purchase, Stripe delivers a license key to your email address. When
+            activating a license key in the app, the key is sent to our
+            verification endpoint to confirm its validity. No other personal
+            data is transmitted during this process.
           </p>
         </section>
 
