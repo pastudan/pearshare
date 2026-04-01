@@ -21,7 +21,7 @@ export default function Footer() {
         {/* Links */}
         <nav className="flex items-center gap-5">
           <a
-            href="/privacy"
+            href="/#/privacy"
             className="text-xs transition-colors"
             style={{ color: "var(--text-muted)" }}
           >
