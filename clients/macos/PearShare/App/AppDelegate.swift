@@ -119,8 +119,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem?.button else { return }
         if inSession {
             let config = NSImage.SymbolConfiguration(paletteColors: [.pearGreen])
-            if let img = NSImage(systemSymbolName: "dot.radiowaves.left.and.right",
-                                 accessibilityDescription: "PearShare")?
+            if let img = NSImage(systemSymbolName: "person.2.fill",
+                                 accessibilityDescription: "PearShare active")?
                             .withSymbolConfiguration(config) {
                 img.isTemplate = false
                 button.image = img
