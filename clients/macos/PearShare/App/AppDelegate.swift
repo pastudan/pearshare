@@ -34,6 +34,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Applied in popoverDidClose(_:) instead.
     private var pendingActivationPolicyRestore = false
 
+    // Host screen-share border (optional visual indicator)
+    private var screenShareBorderWindow: ScreenShareBorderWindow?
+
     // Multiplayer cursor overlays:
     //   viewerCursorOverlay  — pastel blue, shown on HOST screen when host has control
     //   hostGhostOverlay     — pastel red,  shown on HOST screen when viewer has control
@@ -56,6 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var signalingServer: SignalingServer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        UserDefaults.standard.register(defaults: [PearSettings.showScreenShareBorderKey: true])
         NSApp.setActivationPolicy(.accessory)
         // Ensure cursor-mouse association is enabled at launch (recovery from a previous crash
         // that may have left CGAssociateMouseAndMouseCursorPosition(false) in effect).
@@ -265,11 +269,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hgo = RemoteCursorOverlayWindow.pastelRed(peerName: "Me")
         self.viewerCursorOverlay = vco
         self.hostGhostOverlay = hgo
-        session.overlayWindowTitles = [kViewerCursorWindowTitle, kHostGhostCursorWindowTitle, kHostBannerWindowTitle]
+        let showBorder = UserDefaults.standard.bool(forKey: PearSettings.showScreenShareBorderKey)
+        let borderTitles: [String] = showBorder ? [kScreenShareBorderWindowTitle] : []
+        session.overlayWindowTitles = [kViewerCursorWindowTitle, kHostGhostCursorWindowTitle, kHostBannerWindowTitle] + borderTitles
 
         session.debugInfo.roleLabel     = "Host"
         session.debugInfo.peerIP        = peer.tailscaleIP
         session.debugInfo.peerHostname  = peer.displayName
+
+        // Show border first so the banner (ordered front after) appears in front of it.
+        if showBorder, let screen = NSScreen.main ?? NSScreen.screens.first {
+            let border = ScreenShareBorderWindow.make(screen: screen)
+            border.orderFrontRegardless()
+            self.screenShareBorderWindow = border
+            tapLog("[HOST-BORDER] border shown: frame=\(Int(screen.frame.width))×\(Int(screen.frame.height)) origin=(\(Int(screen.frame.minX)),\(Int(screen.frame.minY)))")
+        } else {
+            tapLog("[HOST-BORDER] border skipped: showBorder=\(showBorder) hasScreen=\(NSScreen.main != nil)")
+        }
 
         let banner = HostBannerWindow.make(
             peer: peer,
@@ -343,7 +359,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let hostingView = NSHostingView(rootView: SessionView(renderer: renderer))
         hostingView.wantsLayer = true
-        window.contentView = hostingView
+        hostingView.autoresizingMask = [.width, .height]
+
+        // ViewerWindowContentView is the actual contentView — it provides resize cursor
+        // rects that a .borderless window would otherwise never show.
+        let contentWrapper = ViewerWindowContentView()
+        contentWrapper.addSubview(hostingView)
+        window.contentView = contentWrapper
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
         hostingView.layer?.cornerRadius = 12
         hostingView.layer?.masksToBounds = true
@@ -578,6 +600,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hostGhostOverlay?.hide();    hostGhostOverlay    = nil
         viewerLocalOverlay?.hide();  viewerLocalOverlay  = nil
         viewerHostOverlay?.hide();   viewerHostOverlay   = nil
+        screenShareBorderWindow?.orderOut(nil); screenShareBorderWindow = nil
 
         showViewerCursor()
         viewerIsInControl = false

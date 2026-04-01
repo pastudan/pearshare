@@ -18,6 +18,7 @@ struct ContactListView: View {
     weak var delegate: ContactListViewDelegate?
 
     @AppStorage(PearSettings.autoAcceptSharesKey) private var autoAcceptShares = false
+    @AppStorage(PearSettings.showScreenShareBorderKey) private var showScreenShareBorder = true
 
     @State private var showingExcludedApps = false
     @State private var showingTrustedDevices = false
@@ -31,9 +32,11 @@ struct ContactListView: View {
             Divider()
             autoAcceptRow
             Divider()
+            screenShareBorderRow
+            Divider()
             footer
         }
-        .frame(width: 300, height: 420)
+        .frame(width: 300, height: 495)
         .background(.regularMaterial)
         .sheet(isPresented: $showingExcludedApps) {
             ExcludedAppsView(store: ExcludedAppsStore.shared)
@@ -93,49 +96,94 @@ struct ContactListView: View {
         .padding(.vertical, 8)
     }
 
+    // MARK: - Screen-share border toggle
+
+    private var screenShareBorderRow: some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Show sharing border")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.primary)
+                Text("Glow around your screen while sharing so you know it's active.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Toggle("", isOn: $showScreenShareBorder)
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .labelsHidden()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
     // MARK: - Footer
 
     private var footer: some View {
-        HStack {
-            Button {
-                showingExcludedApps = true
-            } label: {
-                Image(systemName: "eye.slash").font(.caption)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help("Hidden apps")
-
-            Button {
-                showingTrustedDevices = true
-            } label: {
-                Image(systemName: "lock.shield").font(.caption)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help("Trusted Devices")
-
-            Button {
-                if let url = URL(string: "https://pearshare.app/#/privacy") {
-                    NSWorkspace.shared.open(url)
+        VStack(spacing: 0) {
+            HStack {
+                Button {
+                    showingExcludedApps = true
+                } label: {
+                    Image(systemName: "eye.slash").font(.caption)
                 }
-            } label: {
-                Image(systemName: "hand.raised").font(.caption)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help("Privacy Policy")
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Hidden apps")
 
-            Spacer()
-            Button("Quit PearShare") {
-                NSApplication.shared.terminate(nil)
+                Button {
+                    showingTrustedDevices = true
+                } label: {
+                    Image(systemName: "lock.shield").font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Trusted Devices")
+
+                Button {
+                    if let url = URL(string: "https://pearshare.app/#/privacy") {
+                        NSWorkspace.shared.open(url)
+                    }
+                } label: {
+                    Image(systemName: "hand.raised").font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Privacy Policy")
+
+                Spacer()
+                Button("Quit PearShare") {
+                    NSApplication.shared.terminate(nil)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .buttonStyle(.plain)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .buttonStyle(.plain)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+
+            buildInfoRow
         }
+    }
+
+    private var buildInfoRow: some View {
+        HStack(spacing: 4) {
+            Text(BuildInfo.gitCommit + (BuildInfo.gitDirty ? "*" : ""))
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.quaternary)
+            Text("·")
+                .foregroundStyle(.quaternary)
+            Text(BuildInfo.gitMessage)
+                .font(.caption2)
+                .foregroundStyle(.quaternary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.bottom, 6)
     }
 
     // MARK: - Peer list

@@ -138,9 +138,12 @@ final class RTPDepacketizer {
     private var frameIsKeyframe: [UInt32: Bool] = [:]
     private var lastDeliveredTimestamp: UInt32 = 0
 
-    // Jitter buffer: hold up to 4 frames before forcing delivery
+    // Jitter buffer: hold up to 4 frames before forcing delivery of the oldest
     private var pendingTimestamps: [UInt32] = []
     private let jitterBufferDepth = 3
+
+    // Sequence number tracking for gap detection
+    private var expectedSequenceNumber: UInt16?
 
     init(streamID: UInt8 = kPearStreamVideo) {
         self.streamID = streamID
@@ -152,6 +155,15 @@ final class RTPDepacketizer {
 
         let header = parseHeader(packet)
         guard header.version == 1, header.streamID == streamID else { return }
+
+        // Detect sequence number gaps — each gap means at least one lost packet,
+        // which likely means a frame will be delivered incomplete (corrupt artifacts).
+        let seq = header.sequenceNumber
+        if let expected = expectedSequenceNumber, seq != expected {
+            let gap = Int(seq &- expected)
+            tapLog("[DEPKT] Seq gap: expected \(expected) got \(seq) (gap=\(gap)) — frame may be corrupt")
+        }
+        expectedSequenceNumber = seq &+ 1
 
         let payload = packet[kPearPacketHeaderSize...]
         let ts = header.timestamp
@@ -165,9 +177,13 @@ final class RTPDepacketizer {
         fragments[ts]!.append(payload)
         if header.isKeyframe { frameIsKeyframe[ts] = true }
 
-        // Deliver if last-packet flag set OR jitter buffer is full
-        if header.isLastPacket || pendingTimestamps.count > jitterBufferDepth {
+        if header.isLastPacket {
+            // Complete frame — deliver it now
             deliverFrame(at: ts)
+        } else if pendingTimestamps.count > jitterBufferDepth {
+            // Buffer full — deliver the OLDEST pending frame (not the one that triggered
+            // the overflow). Delivering newest would skip older incomplete frames entirely.
+            deliverFrame(at: pendingTimestamps[0])
         }
     }
 

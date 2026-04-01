@@ -14,6 +14,10 @@ extension NSColor {
 enum PearSettings {
     /// UserDefaults key: automatically accept incoming "share" rings without prompting.
     static let autoAcceptSharesKey = "autoAcceptIncomingShares"
+
+    /// UserDefaults key: show a glowing border around the screen when acting as host.
+    /// Defaults to true — register this default in applicationDidFinishLaunching.
+    static let showScreenShareBorderKey = "showScreenShareBorder"
 }
 
 // MARK: - SessionStateStore

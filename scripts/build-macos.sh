@@ -3,15 +3,16 @@
 # PearShare macOS build script
 #
 # Usage:
-#   ./scripts/build-macos.sh                       # debug build
-#   ./scripts/build-macos.sh --run                  # debug build + run locally
-#   ./scripts/build-macos.sh --deploy               # debug build + rsync to laptop
-#   ./scripts/build-macos.sh --run --deploy         # build + run locally + deploy to laptop
+#   ./scripts/build-macos.sh                       # build, then auto-run/deploy per .env
 #   ./scripts/build-macos.sh --clean                # clean derived data first
 #   ./scripts/build-macos.sh --release              # release build
 #   ./scripts/build-macos.sh --release --archive    # build, sign, notarize
 #
-# Deploy target: dan@dans-macbook-air-blue → ~/Downloads/PearShare.app
+# Post-build actions are driven by DEPLOY_HOSTS in .env (no flags needed):
+#   DEPLOY_HOSTS="local"                    → build + launch on this machine
+#   DEPLOY_HOSTS="user@host1"               → build + rsync + launch on host1
+#   DEPLOY_HOSTS="local user@host1"         → build + launch locally + deploy to host1
+#   DEPLOY_HOSTS=""  (or unset)             → build only
 #
 # Notarization setup (one-time):
 #   xcrun notarytool store-credentials "pearshare-notarytool" \
@@ -37,25 +38,30 @@ SCHEME="PearShare"
 DERIVED_DATA="$REPO_ROOT/.build/macos-derived-data"
 ARCHIVE_PATH="$REPO_ROOT/.build/PearShare.xcarchive"
 EXPORT_PATH="$REPO_ROOT/.build/PearShare-export"
-DEPLOY_HOST="dan@dans-macbook-air-blue"
+
+# ── Load .env ─────────────────────────────────────────────────────────────────
+ENV_FILE="$REPO_ROOT/.env"
+if [[ -f "$ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  set -o allexport; source "$ENV_FILE"; set +o allexport
+fi
+
+# DEPLOY_HOSTS: space-separated list of user@host targets (from .env)
+DEPLOY_HOSTS="${DEPLOY_HOSTS:-}"
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 CONFIGURATION="Debug"
-RUN=false
 CLEAN=false
 ARCHIVE=false
-DEPLOY=false
 
 # ── Arg parsing ───────────────────────────────────────────────────────────────
 for arg in "$@"; do
   case $arg in
     --release)  CONFIGURATION="Release" ;;
-    --run)      RUN=true ;;
     --clean)    CLEAN=true ;;
     --archive)  ARCHIVE=true ;;
-    --deploy)   DEPLOY=true ;;
     --help|-h)
-      sed -n '2,20p' "$0" | sed 's/^# //'
+      sed -n '2,22p' "$0" | sed 's/^# //'
       exit 0
       ;;
     *)
@@ -63,6 +69,17 @@ for arg in "$@"; do
       exit 1
       ;;
   esac
+done
+
+# ── Derive run/deploy targets from DEPLOY_HOSTS ───────────────────────────────
+RUN_LOCAL=false
+REMOTE_HOSTS=()
+for target in $DEPLOY_HOSTS; do
+  if [[ "$target" == "local" ]]; then
+    RUN_LOCAL=true
+  else
+    REMOTE_HOSTS+=("$target")
+  fi
 done
 
 # ── Prereq checks ─────────────────────────────────────────────────────────────
@@ -104,6 +121,7 @@ do_clean() {
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 do_build() {
+  "$REPO_ROOT/scripts/generate-build-info.sh"
   echo "→  Building PearShare ($CONFIGURATION)..."
   mkdir -p "$DERIVED_DATA"
 
@@ -216,7 +234,25 @@ do_run() {
   open "$app_path"
 }
 
-# ── Deploy (rsync over Tailscale SSH → laptop ~/Downloads) ────────────────────
+# ── Deploy (rsync over Tailscale SSH → remote ~/Downloads) ───────────────────
+deploy_to_host() {
+  local host="$1"
+  local app_path="$2"
+
+  echo "→  [$host] Killing PearShare..."
+  ssh "$host" 'pkill -x PearShare 2>/dev/null && sleep 0.5 || true'
+
+  echo "→  [$host] Syncing PearShare.app to ~/Downloads/..."
+  rsync -az --delete --progress \
+    "$app_path" \
+    "$host:~/Downloads/"
+
+  echo "→  [$host] Launching PearShare..."
+  ssh "$host" 'open ~/Downloads/PearShare.app'
+
+  echo "✓  [$host] Deployed and launched"
+}
+
 do_deploy() {
   local app_path="$DERIVED_DATA/Build/Products/$CONFIGURATION/PearShare.app"
 
@@ -225,18 +261,26 @@ do_deploy() {
     exit 1
   fi
 
-  echo "→  Killing PearShare on $DEPLOY_HOST..."
-  ssh "$DEPLOY_HOST" 'pkill -x PearShare 2>/dev/null && sleep 0.5 || true'
+  local pids=()
+  local deployed_hosts=()
 
-  echo "→  Syncing PearShare.app to $DEPLOY_HOST:~/Downloads/..."
-  rsync -az --delete --progress \
-    "$app_path" \
-    "$DEPLOY_HOST:~/Downloads/"
+  # Fan out to all remote hosts in parallel
+  for host in "${REMOTE_HOSTS[@]}"; do
+    deploy_to_host "$host" "$app_path" &
+    pids+=($!)
+    deployed_hosts+=("$host")
+  done
 
-  echo "→  Launching PearShare on $DEPLOY_HOST..."
-  ssh "$DEPLOY_HOST" 'open ~/Downloads/PearShare.app'
+  # Wait for all and collect failures
+  local failed=0
+  for i in "${!pids[@]}"; do
+    if ! wait "${pids[$i]}"; then
+      echo "❌  Deploy failed for ${deployed_hosts[$i]}"
+      failed=1
+    fi
+  done
 
-  echo "✓  Deployed and launched on $DEPLOY_HOST"
+  [[ $failed -eq 0 ]] || exit 1
 }
 
 # ── App path helper ───────────────────────────────────────────────────────────
@@ -267,11 +311,11 @@ if $ARCHIVE; then
 else
   do_build
   print_app_path
-  if $RUN; then
+  if $RUN_LOCAL; then
     echo ""
     do_run
   fi
-  if $DEPLOY; then
+  if [[ ${#REMOTE_HOSTS[@]} -gt 0 ]]; then
     echo ""
     do_deploy
   fi

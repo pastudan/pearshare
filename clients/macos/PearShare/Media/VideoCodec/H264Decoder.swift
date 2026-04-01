@@ -26,6 +26,10 @@ final class VideoDecoder {
 
     weak var delegate: VideoDecoderDelegate?
 
+    /// Called (off main thread) when a VT decode error occurs. Wire this to send a
+    /// keyframe request so the host re-transmits a clean starting point.
+    var onDecodeError: (() -> Void)?
+
     private var session: VTDecompressionSession?
     private var formatDescription: CMVideoFormatDescription?
 
@@ -200,6 +204,11 @@ final class VideoDecoder {
         guard status == noErr, let sampleBuffer else { return }
 
         if isKeyframe {
+            // Flush all pending async callbacks from the previous GOP before starting the
+            // new keyframe. Without this, out-of-order or corrupted P-frames from the old
+            // GOP fire their callbacks after the IDR lands, producing green artifacts.
+            VTDecompressionSessionWaitForAsynchronousFrames(session)
+
             let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: true)
             if let array = attachments as? [NSMutableDictionary], let first = array.first {
                 first[kCMSampleAttachmentKey_DisplayImmediately] = true
@@ -213,7 +222,10 @@ final class VideoDecoder {
             infoFlagsOut: nil
         ) { [weak self] status, _, pixelBuffer, pts, _ in
             guard let self, status == noErr, let pixelBuffer else {
-                if status != noErr { logger.error("VideoDecoder: decode error \(status)") }
+                if status != noErr {
+                    logger.error("VideoDecoder: decode error \(status)")
+                    self?.onDecodeError?()
+                }
                 return
             }
             self.delegate?.videoDecoder(self, didDecodeFrame: pixelBuffer, presentationTimestamp: pts)

@@ -30,3 +30,6 @@ Release/
 # Env / secrets
 .env
 *.env.local
+
+# Generated at build time
+clients/macos/PearShare/BuildInfo.generated.swift

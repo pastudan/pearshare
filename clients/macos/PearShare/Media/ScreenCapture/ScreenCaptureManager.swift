@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import ScreenCaptureKit
 import CoreMedia
 import CoreGraphics
@@ -163,17 +164,26 @@ final class ScreenCaptureManager: NSObject {
             config.height = Int(size.height)
             tapLog("[HOST-2b] SCStreamConfig (capped): \(config.width)×\(config.height)")
         } else if let display = targetDisplay {
-            let physW = CGDisplayPixelsWide(display.displayID)
-            let physH = CGDisplayPixelsHigh(display.displayID)
-            config.width  = physW > 0 ? physW : 2560
-            config.height = physH > 0 ? physH : 1600
+            let matchingScreen = NSScreen.screens.first {
+                ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) == display.displayID
+            }
+            if let screen = matchingScreen {
+                let scale = screen.backingScaleFactor
+                config.width  = Int(screen.frame.width  * scale)
+                config.height = Int(screen.frame.height * scale)
+            } else {
+                let physW = CGDisplayPixelsWide(display.displayID)
+                let physH = CGDisplayPixelsHigh(display.displayID)
+                config.width  = physW > 0 ? physW : 2560
+                config.height = physH > 0 ? physH : 1600
+            }
             let rectDesc: String
             if #available(macOS 14.0, *) {
                 rectDesc = "\(Int(filter.contentRect.width))×\(Int(filter.contentRect.height)) pts"
             } else {
                 rectDesc = "n/a (<macOS14)"
             }
-            tapLog("[HOST-2b] SCStreamConfig (native): width=\(config.width) height=\(config.height)  |  CGDisplay=\(physW)×\(physH)  |  contentRect=\(rectDesc)")
+            tapLog("[HOST-2b] SCStreamConfig (native): width=\(config.width) height=\(config.height)  |  matchedNSScreen=\(matchingScreen != nil)  |  contentRect=\(rectDesc)")
         } else {
             config.width  = 2560
             config.height = 1600

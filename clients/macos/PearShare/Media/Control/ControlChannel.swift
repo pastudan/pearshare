@@ -123,6 +123,10 @@ final class ControlChannel {
     }
 
     /// Send a hangup event to the peer. Must be called before stop().
+    func sendRequestKeyframe() {
+        send(.requestKeyframe)
+    }
+
     func sendHangup() {
         // Viewer uses sendConnection; host uses peerConnection (send() only covers the viewer path).
         guard let data = ControlEvent.hangup.toData() else { return }

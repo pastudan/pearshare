@@ -17,10 +17,10 @@ struct VideoDisplayView: NSViewRepresentable {
         view.enableSetNeedsDisplay = false
         view.preferredFramesPerSecond = 60
         view.colorPixelFormat = .bgra8Unorm
-        // Opt into Retina rendering. Without this macOS renders the Metal drawable at 1× even
-        // on a 2× display, then upscales it — halving sharpness. With it the drawable matches
-        // the window's physical pixel count and we get crisp 1:1 rendering.
-        view.wantsBestResolutionOpenGLSurface = true
+        // Opt into Retina rendering: match the CAMetalLayer's contentsScale to the display's
+        // backing scale factor. MTKView.autoResizeDrawable (default true) then sizes the
+        // drawable to physical pixels (2× on Retina), giving crisp 1:1 rendering.
+        view.layer?.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
         renderer.view = view
         return view
     }
@@ -116,7 +116,7 @@ final class VideoRenderer: NSObject, MTKViewDelegate {
         if !hasLoggedFirstDraw {
             hasLoggedFirstDraw = true
             let ds = view.drawableSize
-            tapLog("[VIEWER-3] First draw: pixelBuffer=\(width)×\(height)  |  drawable=\(Int(ds.width))×\(Int(ds.height))  |  viewBounds=\(Int(view.bounds.width))×\(Int(view.bounds.height)) pts  |  wantsBestRes=\(view.wantsBestResolutionOpenGLSurface)")
+            tapLog("[VIEWER-3] First draw: pixelBuffer=\(width)×\(height)  |  drawable=\(Int(ds.width))×\(Int(ds.height))  |  viewBounds=\(Int(view.bounds.width))×\(Int(view.bounds.height)) pts  |  contentsScale=\(view.layer?.contentsScale ?? 1.0)")
         }
 
         guard let yTexture  = makeTexture(from: pixelBuffer, cache: cache, planeIndex: 0, format: .r8Unorm,   width: width,    height: height),
