@@ -115,6 +115,17 @@ struct ContactListView: View {
             .foregroundStyle(.secondary)
             .help("Trusted Devices")
 
+            Button {
+                if let url = URL(string: "https://pearshare.app/#/privacy") {
+                    NSWorkspace.shared.open(url)
+                }
+            } label: {
+                Image(systemName: "hand.raised").font(.caption)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Privacy Policy")
+
             Spacer()
             Button("Quit PearShare") {
                 NSApplication.shared.terminate(nil)
