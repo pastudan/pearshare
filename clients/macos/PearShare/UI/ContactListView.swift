@@ -36,7 +36,7 @@ struct ContactListView: View {
             Divider()
             footer
         }
-        .frame(width: 300, height: 495)
+        .frame(width: 320, height: 495)
         .background(.regularMaterial)
         .sheet(isPresented: $showingExcludedApps) {
             ExcludedAppsView(store: ExcludedAppsStore.shared)
@@ -60,13 +60,13 @@ struct ContactListView: View {
         HStack {
             Image(systemName: "circle.fill")
                 .foregroundStyle(peerStore.tailscaleOnline ? .green : .red)
-                .font(.caption)
+                .font(.footnote)
             Text(peerStore.tailscaleOnline ? "Tailscale connected" : "Tailscale offline")
-                .font(.caption)
+                .font(.footnote)
                 .foregroundStyle(.secondary)
             Spacer()
             Text(peerStore.selfHostName)
-                .font(.caption.bold())
+                .font(.footnote.bold())
                 .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 12)
@@ -79,17 +79,17 @@ struct ContactListView: View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Auto-accept screen shares")
-                    .font(.caption.weight(.medium))
+                    .font(.footnote.weight(.medium))
                     .foregroundStyle(.primary)
                 Text("When a peer offers to share their screen, start viewing immediately — no prompt.")
-                    .font(.caption2)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
             Toggle("", isOn: $autoAcceptShares)
                 .toggleStyle(.switch)
-                .controlSize(.mini)
+                .controlSize(.small)
                 .labelsHidden()
         }
         .padding(.horizontal, 12)
@@ -102,17 +102,17 @@ struct ContactListView: View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Show sharing border")
-                    .font(.caption.weight(.medium))
+                    .font(.footnote.weight(.medium))
                     .foregroundStyle(.primary)
                 Text("Glow around your screen while sharing so you know it's active.")
-                    .font(.caption2)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
             Toggle("", isOn: $showScreenShareBorder)
                 .toggleStyle(.switch)
-                .controlSize(.mini)
+                .controlSize(.small)
                 .labelsHidden()
         }
         .padding(.horizontal, 12)
@@ -127,7 +127,7 @@ struct ContactListView: View {
                 Button {
                     showingExcludedApps = true
                 } label: {
-                    Image(systemName: "eye.slash").font(.caption)
+                    Image(systemName: "eye.slash").font(.callout)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
@@ -136,7 +136,7 @@ struct ContactListView: View {
                 Button {
                     showingTrustedDevices = true
                 } label: {
-                    Image(systemName: "lock.shield").font(.caption)
+                    Image(systemName: "lock.shield").font(.callout)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
@@ -147,7 +147,7 @@ struct ContactListView: View {
                         NSWorkspace.shared.open(url)
                     }
                 } label: {
-                    Image(systemName: "hand.raised").font(.caption)
+                    Image(systemName: "hand.raised").font(.callout)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
@@ -157,7 +157,7 @@ struct ContactListView: View {
                 Button("Quit PearShare") {
                     NSApplication.shared.terminate(nil)
                 }
-                .font(.caption)
+                .font(.footnote)
                 .foregroundStyle(.secondary)
                 .buttonStyle(.plain)
             }
@@ -255,14 +255,14 @@ struct PeerRowView: View {
                         .font(.subheadline.weight(.medium))
                     if isActivePeer {
                         Text("Active")
-                            .font(.caption2.weight(.semibold))
+                            .font(.caption.weight(.semibold))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 2)
                             .background(Color.pearGreen.opacity(0.18), in: Capsule())
                             .foregroundStyle(Color.pearGreen.opacity(0.9))
                     } else if isTrusted {
                         Text("Auto-answers")
-                            .font(.caption2.weight(.medium))
+                            .font(.caption.weight(.medium))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 2)
                             .background(Color.orange.opacity(0.15), in: Capsule())
@@ -272,9 +272,9 @@ struct PeerRowView: View {
                 }
                 HStack(spacing: 4) {
                     Image(systemName: platformIcon)
-                        .font(.caption2)
-                    Text(peer.hostName)
                         .font(.caption)
+                    Text(peer.hostName)
+                        .font(.footnote)
                 }
                 .foregroundStyle(.secondary)
             }
@@ -300,7 +300,7 @@ struct PeerRowView: View {
                     HStack(spacing: 8) {
                         Button(action: onRequest) {
                             Text("Request")
-                                .font(.caption)
+                                .font(.footnote)
                                 .foregroundStyle(.secondary)
                                 .underline()
                         }
@@ -310,10 +310,10 @@ struct PeerRowView: View {
 
                         Button(action: onShare) {
                             Image(systemName: "rectangle.on.rectangle.fill")
-                                .font(.caption)
+                                .font(.footnote)
                         }
                         .buttonStyle(.borderedProminent)
-                        .controlSize(.mini)
+                        .controlSize(.small)
                         .tint(.green)
                         .transition(.opacity.combined(with: .scale))
                         .help("Share your screen with \(peer.displayName)")

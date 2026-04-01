@@ -25,7 +25,7 @@ struct TrustApprovalView: View {
                         .font(.headline)
                         .foregroundStyle(.white)
                     Text("Read carefully before continuing")
-                        .font(.caption)
+                        .font(.footnote)
                         .foregroundStyle(.white.opacity(0.85))
                 }
                 Spacer()
@@ -71,7 +71,7 @@ struct TrustApprovalView: View {
                 )
 
                 Text("You can revoke access at any time from the Trusted Devices list in the contact menu.")
-                    .font(.caption)
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
             }
             .padding(20)

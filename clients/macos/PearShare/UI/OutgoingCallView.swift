@@ -35,13 +35,13 @@ struct OutgoingCallView: View {
                 Text(peer.displayName)
                     .font(.headline)
                 Text(isRequest ? "Requesting screen…" : "Calling…")
-                    .font(.caption)
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
             }
 
             // Elapsed timer
             Text(formattedElapsed)
-                .font(.system(.caption2, design: .monospaced).weight(.medium))
+                .font(.system(.caption, design: .monospaced).weight(.medium))
                 .foregroundStyle(.tertiary)
 
             // Cancel

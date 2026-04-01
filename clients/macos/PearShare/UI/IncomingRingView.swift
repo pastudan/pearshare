@@ -45,9 +45,9 @@ struct IncomingRingView: View {
             if isRequest {
                 HStack(spacing: 8) {
                     Image(systemName: "eye.fill")
-                        .font(.caption)
+                        .font(.footnote)
                     Text("Accepting will share your entire screen. You can optionally grant keyboard & mouse control from the session banner.")
-                        .font(.caption)
+                        .font(.footnote)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(10)
@@ -58,7 +58,7 @@ struct IncomingRingView: View {
 
             // Countdown
             Text("Auto-declining in \(timeRemaining)s")
-                .font(.caption2)
+                .font(.caption)
                 .foregroundStyle(.tertiary)
                 .monospacedDigit()
 
