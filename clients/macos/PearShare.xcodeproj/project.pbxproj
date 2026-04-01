@@ -42,6 +42,7 @@
 		OC000001000000000000OC02 /* OutgoingCallView.swift in Sources */ = {isa = PBXBuildFile; fileRef = OC000001000000000000OC01 /* OutgoingCallView.swift */; };
 		SD000001000000000000SD02 /* SessionDebugInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = SD000001000000000000SD01 /* SessionDebugInfo.swift */; };
 		GI000001000000000000GI03 /* BuildInfo.generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = GI000001000000000000GI02 /* BuildInfo.generated.swift */; };
+		AC000001000000000000AC02 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AC000001000000000000AC01 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -83,6 +84,7 @@
 		OC000001000000000000OC01 /* OutgoingCallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutgoingCallView.swift; sourceTree = "<group>"; };
 		SD000001000000000000SD01 /* SessionDebugInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionDebugInfo.swift; sourceTree = "<group>"; };
 		GI000001000000000000GI02 /* BuildInfo.generated.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "BuildInfo.generated.swift"; path = "BuildInfo.generated.swift"; sourceTree = "<group>"; };
+		AC000001000000000000AC01 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -226,6 +228,7 @@
 				816105E5E691410F9CD175EF /* Info.plist */,
 				42894C96BA1C4B98997BCA07 /* PearShare.entitlements */,
 				4FC8244891494E3FB44A6579 /* VideoShaders.metal */,
+				AC000001000000000000AC01 /* Assets.xcassets */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -318,6 +321,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AC000001000000000000AC02 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -396,6 +400,7 @@
 		7CE44334223740F0BEB36B9D /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = PearShare/Resources/PearShare.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
@@ -436,6 +441,7 @@
 		C6C210A24CF040EF84AC9759 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = PearShare/Resources/PearShare.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
