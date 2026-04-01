@@ -17,9 +17,12 @@ fi
 
 COMMIT=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
-# Count tracked-file changes (excludes untracked ??-prefixed lines)
-DIRTY_COUNT=$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null | grep -cE "^[^?]" || echo 0)
-[ "$DIRTY_COUNT" -gt 0 ] && DIRTY=true || DIRTY=false
+# Check for tracked-file changes (excludes untracked ??-prefixed lines)
+if git -C "$REPO_ROOT" status --porcelain 2>/dev/null | grep -qE "^[^?]"; then
+    DIRTY=true
+else
+    DIRTY=false
+fi
 
 # Truncate to 60 chars and escape any double quotes
 MESSAGE=$(git -C "$REPO_ROOT" log -1 --format="%s" 2>/dev/null | cut -c1-60 || echo "")
