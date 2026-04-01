@@ -234,21 +234,27 @@ do_run() {
   open "$app_path"
 }
 
-# ── Deploy (rsync over Tailscale SSH → remote ~/Downloads) ───────────────────
+# ── Deploy (rsync over Tailscale SSH) ────────────────────────────────────────
 deploy_to_host() {
   local host="$1"
   local app_path="$2"
 
-  echo "→  [$host] Killing PearShare..."
+  echo "→  [$host] Stopping PearShare..."
   ssh "$host" 'pkill -x PearShare 2>/dev/null && sleep 0.5 || true'
 
-  echo "→  [$host] Syncing PearShare.app to ~/Downloads/..."
+  # Always deploy to /Applications on the remote host.
+  # ~/Downloads triggers macOS Gatekeeper translocation: the first `open` runs the app from a
+  # randomized /private/var/folders/ path, so future deploys to ~/Downloads are ignored.
+  # /Applications is never translocated and is writable by admin users without sudo.
+  local remote_parent="/Applications"
+
+  echo "→  [$host] Syncing PearShare.app to $remote_parent/..."
   rsync -az --delete --progress \
     "$app_path" \
-    "$host:~/Downloads/"
+    "$host:$remote_parent/"
 
   echo "→  [$host] Launching PearShare..."
-  ssh "$host" 'open ~/Downloads/PearShare.app'
+  ssh "$host" "xattr -rd com.apple.quarantine \"$remote_parent/PearShare.app\" 2>/dev/null || true; open \"$remote_parent/PearShare.app\""
 
   echo "✓  [$host] Deployed and launched"
 }
