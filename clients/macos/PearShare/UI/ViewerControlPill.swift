@@ -68,6 +68,7 @@ struct ViewerControlPillView: View {
                     .background(.black.opacity(0.09), in: Circle())
             }
             .buttonStyle(.plain)
+            .help(isMuted ? "Unmute microphone" : "Mute microphone")
 
             Button {
                 showDebug.toggle()
@@ -79,6 +80,7 @@ struct ViewerControlPillView: View {
                     .background(showDebug ? Color.black.opacity(0.35) : Color.black.opacity(0.09), in: Circle())
             }
             .buttonStyle(.plain)
+            .help("Session debug info")
             .popover(isPresented: $showDebug, arrowEdge: .bottom) {
                 SessionDebugView(info: debugInfo)
             }
@@ -91,6 +93,7 @@ struct ViewerControlPillView: View {
                     .background(.red, in: Circle())
             }
             .buttonStyle(PillButtonStyle())
+            .help("End session")
         }
         .padding(.horizontal, 14)
         .frame(width: 340, height: 40)

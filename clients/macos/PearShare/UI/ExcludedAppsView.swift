@@ -277,6 +277,7 @@ private struct AppToggleRow: View {
                         .foregroundStyle(.red)
                 }
                 .buttonStyle(.plain)
+                .help("Remove from hidden apps")
                 .transition(.opacity)
             }
 
