@@ -6,8 +6,8 @@ import Foundation
 // All pointer coordinates are normalized to [0, 1] relative to the host display.
 //
 // Direction:
-//   viewer → host : mouseMoved, mouseButton, scroll, keyEvent, hangup, heartbeat
-//   host → viewer : controlTransfer, hostCursorMoved, hangup
+//   viewer → host : mouseMoved, mouseButton, scroll, keyEvent, hangup, heartbeat, requestKeyframe
+//   host → viewer : controlTransfer, hostCursorMoved, inputStateChanged, hangup
 
 enum ControlEvent: Codable {
     case mouseMoved(x: Double, y: Double)
@@ -16,15 +16,18 @@ enum ControlEvent: Codable {
     /// false for a traditional mouse wheel (discrete line-count deltas).
     case scroll(x: Double, y: Double, dx: Double, dy: Double, precise: Bool)
     case keyEvent(keyCode: UInt16, modifiers: UInt64, down: Bool)
-    /// Sent host → viewer to notify who currently has control of the system cursor.
+    /// Host → viewer: who currently has control of the system cursor.
     case controlTransfer(controller: Controller)
-    /// Sent host → viewer while viewer has control: host's ghost cursor position [0,1].
+    /// Host → viewer while viewer has control: host ghost cursor position [0,1].
     case hostCursorMoved(x: Double, y: Double)
+    /// Host → viewer: whether keyboard & mouse sharing is enabled.
+    /// Viewer uses this to show/hide cursor management UI.
+    case inputStateChanged(enabled: Bool)
     /// Either side: notifies peer that this side is ending the session.
     case hangup
     /// Viewer → host keepalive; host ends the session if none arrive within the watchdog window.
     case heartbeat
-    /// Viewer → host: please send an IDR keyframe immediately so the viewer can start rendering.
+    /// Viewer → host: please send an IDR keyframe immediately.
     case requestKeyframe
 
     // MARK: - Nested types
@@ -35,7 +38,7 @@ enum ControlEvent: Codable {
         case other  = 2
     }
 
-    /// Which participant currently drives the real system cursor.
+    /// Which participant currently drives the real system cursor on the host machine.
     enum Controller: String, Codable {
         case host
         case viewer
@@ -44,12 +47,12 @@ enum ControlEvent: Codable {
     // MARK: - Codable (manual tagged union)
 
     private enum CodingKeys: String, CodingKey {
-        case type, x, y, button, down, dx, dy, precise, keyCode, modifiers, controller
+        case type, x, y, button, down, dx, dy, precise, keyCode, modifiers, controller, enabled
     }
 
     private enum EventType: String, Codable {
         case mouseMoved, mouseButton, scroll, keyEvent, controlTransfer, hostCursorMoved
-        case hangup, heartbeat, requestKeyframe
+        case inputStateChanged, hangup, heartbeat, requestKeyframe
     }
 
     init(from decoder: Decoder) throws {
@@ -91,6 +94,10 @@ enum ControlEvent: Codable {
                 x: try c.decode(Double.self, forKey: .x),
                 y: try c.decode(Double.self, forKey: .y)
             )
+        case .inputStateChanged:
+            self = .inputStateChanged(
+                enabled: try c.decode(Bool.self, forKey: .enabled)
+            )
         case .hangup:
             self = .hangup
         case .heartbeat:
@@ -105,20 +112,15 @@ enum ControlEvent: Codable {
         switch self {
         case .mouseMoved(let x, let y):
             try c.encode(EventType.mouseMoved, forKey: .type)
-            try c.encode(x, forKey: .x)
-            try c.encode(y, forKey: .y)
+            try c.encode(x, forKey: .x); try c.encode(y, forKey: .y)
         case .mouseButton(let x, let y, let button, let down):
             try c.encode(EventType.mouseButton, forKey: .type)
-            try c.encode(x, forKey: .x)
-            try c.encode(y, forKey: .y)
-            try c.encode(button, forKey: .button)
-            try c.encode(down, forKey: .down)
+            try c.encode(x, forKey: .x); try c.encode(y, forKey: .y)
+            try c.encode(button, forKey: .button); try c.encode(down, forKey: .down)
         case .scroll(let x, let y, let dx, let dy, let precise):
             try c.encode(EventType.scroll, forKey: .type)
-            try c.encode(x, forKey: .x)
-            try c.encode(y, forKey: .y)
-            try c.encode(dx, forKey: .dx)
-            try c.encode(dy, forKey: .dy)
+            try c.encode(x, forKey: .x); try c.encode(y, forKey: .y)
+            try c.encode(dx, forKey: .dx); try c.encode(dy, forKey: .dy)
             try c.encode(precise, forKey: .precise)
         case .keyEvent(let keyCode, let modifiers, let down):
             try c.encode(EventType.keyEvent, forKey: .type)
@@ -130,8 +132,10 @@ enum ControlEvent: Codable {
             try c.encode(controller, forKey: .controller)
         case .hostCursorMoved(let x, let y):
             try c.encode(EventType.hostCursorMoved, forKey: .type)
-            try c.encode(x, forKey: .x)
-            try c.encode(y, forKey: .y)
+            try c.encode(x, forKey: .x); try c.encode(y, forKey: .y)
+        case .inputStateChanged(let enabled):
+            try c.encode(EventType.inputStateChanged, forKey: .type)
+            try c.encode(enabled, forKey: .enabled)
         case .hangup:
             try c.encode(EventType.hangup, forKey: .type)
         case .heartbeat:

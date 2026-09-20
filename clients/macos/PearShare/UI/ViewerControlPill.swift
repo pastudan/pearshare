@@ -127,3 +127,22 @@ private struct PillButtonStyle: ButtonStyle {
             .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
     }
 }
+
+// MARK: - InputBlockedHintView
+
+/// Toast shown briefly below the viewer control pill when the viewer tries to
+/// take mouse/keyboard control but the host hasn't enabled K&M sharing yet.
+struct InputBlockedHintView: View {
+    var body: some View {
+        Text("Ask your host to enable K&M sharing")
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity)
+            .background(
+                Capsule()
+                    .fill(.black.opacity(0.72))
+            )
+    }
+}

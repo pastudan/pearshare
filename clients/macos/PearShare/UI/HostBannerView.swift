@@ -13,11 +13,16 @@ final class HostBannerWindow: NSWindow {
     static func make(
         peer: PearPeer,
         debugInfo: SessionDebugInfo,
+        initialInputEnabled: Bool = false,
         onHangup: @escaping () -> Void,
         onInputToggled: @escaping (Bool) -> Void
     ) -> HostBannerWindow {
         let w = HostBannerWindow()
-        let view = HostBannerView(peer: peer, debugInfo: debugInfo, onHangup: onHangup, onInputToggled: onInputToggled)
+        let view = HostBannerView(
+            peer: peer, debugInfo: debugInfo,
+            initialInputEnabled: initialInputEnabled,
+            onHangup: onHangup, onInputToggled: onInputToggled
+        )
         w.title = kHostBannerWindowTitle
         let hosting = NSHostingView(rootView: view)
         hosting.wantsLayer = true
@@ -62,8 +67,22 @@ struct HostBannerView: View {
     @State private var elapsed: TimeInterval = 0
     @State private var timer: Timer?
     @State private var isMuted = true
-    @State private var isInputEnabled = false
+    @State private var isInputEnabled: Bool
     @State private var showDebug = false
+
+    init(
+        peer: PearPeer,
+        debugInfo: SessionDebugInfo,
+        initialInputEnabled: Bool = false,
+        onHangup: @escaping () -> Void,
+        onInputToggled: @escaping (Bool) -> Void
+    ) {
+        self.peer = peer
+        self.debugInfo = debugInfo
+        self.onHangup = onHangup
+        self.onInputToggled = onInputToggled
+        self._isInputEnabled = State(initialValue: initialInputEnabled)
+    }
 
     var body: some View {
         HStack(spacing: 0) {

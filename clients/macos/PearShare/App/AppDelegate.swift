@@ -38,18 +38,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var screenShareBorderWindow: ScreenShareBorderWindow?
 
     // Multiplayer cursor overlays:
-    //   viewerCursorOverlay  — pastel blue, shown on HOST screen when host has control
+    //   viewerCursorOverlay  — pastel blue, shown on HOST screen (viewer's pointer position)
     //   hostGhostOverlay     — pastel red,  shown on HOST screen when viewer has control
-    //   viewerLocalOverlay   — pastel blue, shown on VIEWER screen when viewer is NOT in control
+    //   viewerLocalOverlay   — pastel blue, shown on VIEWER screen when host has control
     //   viewerHostOverlay    — pastel red,  shown on VIEWER screen when viewer has control
     private var viewerCursorOverlay: RemoteCursorOverlayWindow?
     private var hostGhostOverlay: RemoteCursorOverlayWindow?
     private var viewerLocalOverlay: RemoteCursorOverlayWindow?
     private var viewerHostOverlay: RemoteCursorOverlayWindow?
 
-    // Viewer-side control state
-    private var viewerIsInControl = false
+    // Viewer-side cursor visibility state (managed here, driven by ControlChannel callbacks)
     private var isViewerCursorHidden = false
+    private var viewerInputModeActive = false  // true when K&M sharing is enabled on host
     // NSEvent monitors used on the viewer side (stored as Any; cleaned up in endSession)
     private var viewerEventMonitors: [Any] = []
 
@@ -87,15 +87,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Viewer cursor visibility helpers
 
-    /// Hide the viewer's system cursor (used when host has control).
-    /// Balanced with showViewerCursor(); safe to call redundantly.
     private func hideViewerCursor() {
         guard !isViewerCursorHidden else { return }
         isViewerCursorHidden = true
         NSCursor.hide()
     }
 
-    /// Restore the viewer's system cursor. Safe to call redundantly.
     private func showViewerCursor() {
         guard isViewerCursorHidden else { return }
         isViewerCursorHidden = false
@@ -287,9 +284,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             tapLog("[HOST-BORDER] border skipped: showBorder=\(showBorder) hasScreen=\(NSScreen.main != nil)")
         }
 
+        // Trusted peers have auto-answer enabled — automatically share K&M too so
+        // they can take control without needing verbal confirmation.
+        let isTrusted = TrustedDeviceStore.shared.isTrusted(peerID: peer.id)
+
         let banner = HostBannerWindow.make(
             peer: peer,
             debugInfo: session.debugInfo,
+            initialInputEnabled: isTrusted,
             onHangup: { [weak self] in self?.endSession() },
             onInputToggled: { [weak self] enabled in
                 self?.activeSession?.controlChannel?.setInputEnabled(enabled)
@@ -303,19 +305,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try await session.start()
                 guard let ctrl = session.controlChannel else { return }
 
+                // Initial state: host has control, viewer pointer visible, ghost hidden.
                 vco.show()
                 hgo.hide()
 
-                ctrl.onRemoteCursorMoved = { [weak vco] screenPt in vco?.moveTo(screenPoint: screenPt) }
-                ctrl.onHostCursorMoved   = { [weak hgo] screenPt in hgo?.moveTo(screenPoint: screenPt) }
-                ctrl.onControlTransfer   = { [weak self, weak vco, weak hgo] controller in
+                // If the peer is trusted, enable K&M sharing immediately — the ControlChannel
+                // is now live and will broadcast inputStateChanged(true) to the viewer.
+                if isTrusted { ctrl.setInputEnabled(true) }
+
+                ctrl.onViewerPointerMoved = { [weak vco] screenPt in vco?.moveTo(screenPoint: screenPt) }
+                ctrl.onHostGhostMoved     = { [weak hgo] screenPt in hgo?.moveTo(screenPoint: screenPt) }
+                ctrl.onControlStateChanged = { [weak self, weak vco, weak hgo] controller in
                     if controller == .viewer {
-                        // Viewer has control: hide system cursor from stream, show host ghost D
-                        vco?.hide(); hgo?.show()
+                        vco?.hide()
+                        hgo?.show()
                         self?.activeSession?.setShowsCursor(false)
                     } else {
-                        // Host has control: show system cursor in stream, show viewer cursor overlay
-                        vco?.show(); hgo?.hide()
+                        vco?.show()
+                        hgo?.hide()
                         self?.activeSession?.setShowsCursor(true)
                     }
                 }
@@ -418,40 +425,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     )
                 }
 
-                // C — blue "Me" overlay: visible only when host has control.
-                // D (on viewer) — red host overlay: visible only when viewer has control.
-                // System cursor: hidden when host has control, shown when viewer has control.
-                ctrl.onControlTransfer = { [weak self, weak vlo, weak vho] controller in
+                let sn = self.sessionCounter
+
+                // inputStateChanged: K&M sharing toggled on host.
+                // Drives whether viewer cursor management is active at all.
+                ctrl.onInputModeChanged = { [weak self, weak vlo, weak vho] enabled in
                     guard let self else { return }
-                    let inControl = (controller == .viewer)
-                    self.viewerIsInControl = inControl
-                    if inControl {
-                        // Viewer took control: show system cursor A + red host ghost D; hide C.
+                    self.viewerInputModeActive = enabled
+                    if !enabled {
+                        // K&M sharing disabled — restore viewer's cursor, hide overlays.
+                        vlo?.hide(); vho?.hide()
+                        self.showViewerCursor()
+                    } else {
+                        // K&M sharing enabled — host has control by default, hide cursor.
+                        // Dismiss any "ask host" hint since sharing is now on.
+                        self.inputBlockedHintPanel?.orderOut(nil)
+                        self.inputBlockedHintPanel = nil
+                        self.hideViewerCursor()
+                        vlo?.moveTo(screenPoint: NSEvent.mouseLocation)
+                        vlo?.show()
+                    }
+                }
+
+                // controlTransfer: who now drives the real cursor on the host machine.
+                ctrl.onControlStateChanged = { [weak self, weak vlo, weak vho] controller in
+                    guard let self, self.viewerInputModeActive else { return }
+                    if controller == .viewer {
+                        // Viewer has control: show real cursor; show red host ghost; hide blue "me".
                         vlo?.hide()
                         self.showViewerCursor()
                         vho?.show()
                     } else {
-                        // Host took control: hide system cursor; show C; hide D.
+                        // Host has control: hide real cursor; show blue "me"; hide red host ghost.
                         vho?.hide()
                         self.hideViewerCursor()
                         vlo?.moveTo(screenPoint: NSEvent.mouseLocation)
                         vlo?.show()
                     }
                 }
-                ctrl.onLocalCursorMoved = { [weak self, weak vlo] screenPt in
+
+                // Local cursor moved — update blue "me" overlay position.
+                ctrl.onLocalPointerMoved = { [weak vlo] screenPt in
                     vlo?.moveTo(screenPoint: screenPt)
-                    // Only show C when host has control (viewer has control → system cursor A is shown).
-                    if self?.viewerIsInControl == false { vlo?.show() }
                 }
-                ctrl.onRemoteHostCursorMoved = { [weak vho] screenPt in
+
+                // Host ghost moved — update red host overlay position.
+                ctrl.onHostGhostMoved_viewer = { [weak vho] screenPt in
                     vho?.moveTo(screenPoint: screenPt)
                 }
+
                 ctrl.onMouseExitedWindow = { [weak self, weak vlo, weak vho] in
-                    vlo?.hide()
-                    vho?.hide()
+                    vlo?.hide(); vho?.hide()
                     self?.showViewerCursor()
                 }
-                let sn = self.sessionCounter
+
+                ctrl.onInputBlocked = { [weak self] in self?.showInputBlockedHint() }
+
                 tapLog("[SESSION-\(sn)] viewer ctrl.onHangup wired")
                 ctrl.onHangup = { [weak self] in
                     tapLog("[SESSION-\(sn)] viewer onHangup fired → endSession")
@@ -509,6 +538,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let x = window.frame.midX - pill.frame.width / 2
         let y = window.frame.maxY - pill.frame.height / 2
         pill.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
+    // MARK: - Input-blocked hint
+
+    private weak var inputBlockedHintPanel: NSPanel?
+
+    /// Show a brief "ask host to enable K&M sharing" toast near the viewer control pill.
+    /// Rate-limited: only one notice at a time.
+    private func showInputBlockedHint() {
+        guard inputBlockedHintPanel == nil,
+              let pill = viewerControlPill else { return }
+
+        let toastWidth: CGFloat = 300
+        let toastHeight: CGFloat = 30
+        let gap: CGFloat = 6
+        let x = pill.frame.midX - toastWidth / 2
+        let y = pill.frame.minY - toastHeight - gap
+
+        let panel = NSPanel(
+            contentRect: NSRect(x: x, y: y, width: toastWidth, height: toastHeight),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.ignoresMouseEvents = true
+
+        let hosting = NSHostingView(rootView: InputBlockedHintView())
+        hosting.wantsLayer = true
+        hosting.layer?.backgroundColor = NSColor.clear.cgColor
+        panel.contentView = hosting
+        panel.orderFrontRegardless()
+        inputBlockedHintPanel = panel
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak panel] in
+            panel?.orderOut(nil)
+        }
     }
 
     /// Inverse of repositionControlPill: move the session window to stay anchored below the pill.
@@ -603,7 +672,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         screenShareBorderWindow?.orderOut(nil); screenShareBorderWindow = nil
 
         showViewerCursor()
-        viewerIsInControl = false
+        viewerInputModeActive = false
+        inputBlockedHintPanel?.orderOut(nil)
+        inputBlockedHintPanel = nil
 
         sessionStateStore.activePeer = nil
         sessionStateStore.role = nil
@@ -742,14 +813,23 @@ extension AppDelegate: NSWindowDelegate {
         showViewerCursor()
     }
 
-    /// Viewer came back to the session window — re-apply cursor state based on who's in control.
+    /// Viewer returned to the session window — re-apply cursor state.
+    /// K&M sharing must be active (viewerInputModeActive) for any cursor management.
     func windowDidBecomeKey(_ notification: Notification) {
         guard (notification.object as? NSWindow) === sessionWindow else { return }
-        if viewerIsInControl {
-            // Viewer has control: restore system cursor + red host ghost
+        guard viewerInputModeActive else {
+            // K&M sharing off — viewer keeps their normal cursor.
+            showViewerCursor()
+            return
+        }
+        // Re-apply the state driven by the last controlTransfer we received.
+        // The ControlChannel's onControlStateChanged callback is authoritative;
+        // here we just restore whichever side of that state we're in.
+        if !isViewerCursorHidden {
+            // Viewer had control — restore overlays.
             viewerHostOverlay?.show()
         } else {
-            // Host has control: hide system cursor, show blue local overlay
+            // Host had control — re-hide cursor and show blue overlay.
             hideViewerCursor()
             viewerLocalOverlay?.moveTo(screenPoint: NSEvent.mouseLocation)
             viewerLocalOverlay?.show()
